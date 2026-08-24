@@ -4,7 +4,7 @@ import type {
   AppState, AuditEntry, CustomerInfo, Delegation, GpsRec, Notif, Op, OpStatus, OpType,
   PhotoRec, Role, ScanRec, User, WorkflowComment,
 } from "./types";
-import { activeDelegation, OPS, STAGES, TERMINAL, uid, gen20, actionableBy } from "./types";
+import { activeDelegation, OPS, PERMS, STAGES, TERMINAL, uid, gen20, actionableBy } from "./types";
 import { buildSeed } from "./seed";
 
 const LS_KEY = "zadmin:v3";
@@ -14,7 +14,13 @@ function load(): AppState {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const s = JSON.parse(raw) as AppState;
-      if (s.v === 3) return s;
+      if (s.v === 3) {
+        // Super Admin always holds the full permission catalogue — a newly
+        // introduced permission (e.g. admin.database) applies immediately,
+        // even when the persisted matrix predates it.
+        s.permissionMatrix = { ...s.permissionMatrix, SUPER_ADMIN: [...PERMS] };
+        return s;
+      }
     }
   } catch { /* fall through to seed */ }
   return buildSeed();

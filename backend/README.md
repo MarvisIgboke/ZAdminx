@@ -121,6 +121,74 @@ Data: `GET facilities[/refresh]`, `facilities/{id}/customers|meters|operations`,
 Admin: `administration/users|roles|settings|api-settings|delegations|api-logs|audit-logs`,
 `reports/operations`, `notifications`.
 
+## 5.1 ZVend wire contract (the four operation calls)
+
+`ZVendApiService` is the **only** HTTP path to ZVend. Z Admin calls these
+automatically (queued `CallZVendOperationJob`) **after MD approval** — clients
+never call ZVend directly. If you are testing ZVend itself (curl / Postman /
+contract tests), these are the exact shapes Z Admin sends.
+
+Common headers on all four:
+
+```
+Authorization:   Bearer {ZVEND_API_TOKEN}      # env or encrypted api_settings
+Content-Type:    application/json
+Accept:          application/json
+Idempotency-Key: zvend:{transaction}:{attempt}  # e.g. zvend:ZADM-INS-20260213-000001:1
+```
+
+**1. INSTALL** — `POST {ZVEND_BASE_URL}/v1/meters/install`
+
+```json
+{ "meter_number": "45039813401", "facility": "FAC-IKY" }
+```
+
+**2. ACTIVATE** — `POST {ZVEND_BASE_URL}/v1/meters/activate`
+
+```json
+{
+  "facility": "FAC-IKY",
+  "meter_number": "45039813117",
+  "customer_name": "John Joe",
+  "customer_phone": "08031112222",
+  "customer_email": "john.joe@mail.com",
+  "customer_address": "12 Adeola Close, Ikoyi",
+  "latitude": 6.443211,
+  "longitude": 3.418600
+}
+```
+
+Null/empty fields are dropped (`array_filter`) before sending.
+
+**3. TAMPER** — `POST {ZVEND_BASE_URL}/v1/meters/tamper-code`
+
+```json
+{ "meter_number": "45039813339" }
+```
+
+**4. CLEAR** — `POST {ZVEND_BASE_URL}/v1/meters/clear-code`
+
+```json
+{ "meter_number": "45039813339" }
+```
+
+**Expected response** (parsed by `CallZVendOperationJob`; `data.reference`
+accepted as fallback):
+
+```json
+{
+  "response_code": "00",
+  "reference": "ZV-REF-88213",
+  "tamper_code": "88410293571620483759",
+  "clear_code": "66291847350219864530"
+}
+```
+
+`response_code` may also echo the HTTP status. Tamper/clear codes are 20-digit
+numerals; they are stored encrypted and **never** appear in API logs. Non-2xx
+responses raise `ZVendException` → the record moves to `ZVEND_FAILED` with a
+permission-gated retry.
+
 ## 6. Storage & security
 
 - Uploads land on the private disk under `{operation}/{transaction}/photos|video`

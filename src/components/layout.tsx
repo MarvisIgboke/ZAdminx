@@ -83,6 +83,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           {can("customers.view") && <Item it={{ label: "Customers", to: "customers", icon: "users" }} />}
           {can("meters.view") && <Item it={{ label: "Meters", to: "meters", icon: "gauge" }} />}
           {can("reports.view") && <Item it={{ label: "Reports", to: "reports", icon: "chart" }} />}
+          {user.role === "SUPER_ADMIN" && <Item it={{ label: "API Reference", to: "api-docs", icon: "doc" }} />}
         </Section>
 
         {(can("admin.users") || can("admin.roles") || can("admin.api") || can("admin.apilogs") || can("admin.audit") || can("admin.settings")) && (
@@ -93,6 +94,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             {can("admin.apilogs") && <Item it={{ label: "API Logs", to: "admin/api-logs", icon: "list" }} />}
             {can("admin.audit") && <Item it={{ label: "Audit Logs", to: "admin/audit", icon: "history" }} />}
             {(can("admin.settings") || user.role === "SUPER_ADMIN") && <Item it={{ label: "System Settings", to: "admin/settings", icon: "settings" }} />}
+            {can("admin.database") && <Item it={{ label: "Database", to: "admin/database", icon: "db" }} />}
           </Section>
         )}
       </div>

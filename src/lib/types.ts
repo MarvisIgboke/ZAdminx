@@ -114,12 +114,31 @@ export interface ZvendConfig {
   endpoints: Record<string, string>;
 }
 
+export interface DbConfig {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  charset: string;
+  collation: string;
+  prefix: string;
+  ssl: boolean;
+  connected?: boolean;
+  testedAt?: number;
+  serverVersion?: string;
+  schemaInstalled?: boolean;
+  migratedAt?: number;
+  seededAt?: number;
+}
+
 export interface Settings {
   inspectionDurations: number[]; // seconds
   defaultDurationSec: number;
   maxGpsAccuracyM: number;
   allowedDistanceM: number;
   zvend: ZvendConfig;
+  db?: DbConfig;
 }
 
 export interface AppState {
@@ -238,7 +257,7 @@ export const PERMS = [
   "clear.view", "clear.create", "clear.approve", "clear.execute",
   "approvals.view", "facilities.view", "facilities.sync", "customers.view", "meters.view",
   "reports.view", "notifications.view", "history.view",
-  "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation",
+  "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation", "admin.database",
 ] as const;
 
 export type Perm = (typeof PERMS)[number];
