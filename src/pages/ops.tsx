@@ -124,6 +124,25 @@ function GateNote({ text, onBack }: { text: string; onBack: () => void }) {
   );
 }
 
+/* Module-scoped on purpose: defining this inside a page component would give
+   it a fresh identity every render, remounting the whole form on each state
+   change (lost taps, dropped input focus, replayed animations). */
+function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`rounded-xl border p-4 transition-colors ${done ? "border-[#c2ddcd]" : "border-line"} bg-card`}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold transition-colors ${done ? "bg-ok text-white" : "bg-ink text-paper"}`}>{done ? <Icon name="check" size={12} /> : n}</span>
+        <p className="font-display text-[14px] font-bold">{title}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const FALLBACK_PHOTO = "data:image/svg+xml;utf8," + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><rect width='640' height='480' fill='#232c26'/><rect x='170' y='110' width='300' height='220' fill='#2c3830' stroke='#e89b2e' stroke-width='3'/><text x='320' y='232' fill='#e8e6da' font-family='monospace' font-size='22' text-anchor='middle'>ZAROX FIELD PHOTO</text></svg>"
+);
+
 /* ================= New installation (Secretary) ================= */
 export function NewInstallationPage() {
   const { state, createInstallation, user } = useStore();
@@ -229,6 +248,7 @@ export function StartActivationPage() {
   const [gps, setGps] = useState<GpsRec | null>(null);
   const [gpsBusy, setGpsBusy] = useState(false);
   const [photos, setPhotos] = useState<PhotoRec[]>([]);
+  const [capturing, setCapturing] = useState<string | null>(null);
   const [cust, setCust] = useState<CustomerInfo>({ name: "", phone: "", email: "", address: "" });
   const [comment, setComment] = useState("");
   const [err, setErr] = useState("");
@@ -256,7 +276,19 @@ export function StartActivationPage() {
       setGpsBusy(false);
     }, 1400);
   };
-  const snap = (label: string) => setPhotos(p => [...p, { id: Math.random().toString(36).slice(2), label, dataUrl: snapPhoto(label, meter, gps?.lat, gps?.lng), at: Date.now(), lat: gps?.lat, lng: gps?.lng }]);
+  /* Photo capture: brief shutter feedback per tile, guarded canvas call so a
+     capture can never silently no-op, and retake by tapping a thumbnail. */
+  const snap = (label: string) => {
+    if (capturing) return;
+    setCapturing(label);
+    window.setTimeout(() => {
+      let url: string;
+      try { url = snapPhoto(label, meter, gps?.lat, gps?.lng); }
+      catch { url = FALLBACK_PHOTO; }
+      setPhotos(p => [...p.filter(x => x.label !== label), { id: Math.random().toString(36).slice(2), label, dataUrl: url, at: Date.now(), lat: gps?.lat, lng: gps?.lng }]);
+      setCapturing(null);
+    }, 420);
+  };
   const submit = () => {
     if (!meter) { setErr("Scan or select the meter to activate."); return; }
     if (scanState !== "ok") { setErr("Barcode verification must show METER VERIFIED."); return; }
@@ -266,15 +298,6 @@ export function StartActivationPage() {
     const op = createActivation({ meterNumber: meter, facilityId: fac, customer: cust, gps, photos, scan: { value: meter, matched: true, at: Date.now() }, comment });
     if (op) nav(`meter-activation/${op.id}`);
   };
-  const Step = ({ n, title, done, children }: { n: number; title: string; done: boolean; children: React.ReactNode }) => (
-    <div className={`anim-rise rounded-xl border p-4 ${done ? "border-[#c2ddcd]" : "border-line"} bg-card`}>
-      <div className="mb-3 flex items-center gap-2">
-        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold ${done ? "bg-ok text-white" : "bg-ink text-paper"}`}>{done ? <Icon name="check" size={12} /> : n}</span>
-        <p className="font-display text-[14px] font-bold">{title}</p>
-      </div>
-      {children}
-    </div>
-  );
   return (
     <div className="mx-auto max-w-2xl">
       <BackLink to="meter-activation" label="Meter Activation" />
@@ -306,12 +329,32 @@ export function StartActivationPage() {
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             {["Meter Front", "Meter Installation", "Meter Barcode", "Environment"].map(l => {
               const p = photos.find(x => x.label === l);
-              return p ? <img key={l} src={p.dataUrl} alt={l} className="aspect-[4/3] w-full rounded-lg border border-line object-cover" />
-                : <button key={l} onClick={() => snap(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-colors hover:border-volt hover:bg-voltsoft">
+              const busy = capturing === l;
+              if (busy) return (
+                <div key={l} className="relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-volt bg-side">
+                  <span className="anim-shutter absolute inset-0 bg-white" />
+                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                    <Icon name="camera" size={17} className="text-volt livedot" />
+                    <span className="font-mono text-[9px] font-bold tracking-widest text-[#9aa79e]">CAPTURING…</span>
+                  </span>
+                </div>
+              );
+              return p ? (
+                <button key={l} onClick={() => snap(l)} title="Tap to retake" className="group relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line">
+                  <img src={p.dataUrl} alt={l} className="anim-pop h-full w-full object-cover" />
+                  <span className="absolute inset-0 flex items-end justify-center bg-ink/0 pb-1 opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100">
+                    <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-paper">RETAKEN ↺</span>
+                  </span>
+                  <span className="absolute left-1 top-1 rounded bg-ok px-1 py-px text-[8.5px] font-extrabold tracking-wider text-white">✓ {new Date(p.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                </button>
+              ) : (
+                <button key={l} onClick={() => snap(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-all hover:-translate-y-0.5 hover:border-volt hover:bg-voltsoft active:translate-y-0">
                   <Icon name="camera" size={16} className="text-mute" /><span className="px-1 text-center text-[9.5px] font-extrabold text-ink2">{l}</span>
-                </button>;
+                </button>
+              );
             })}
           </div>
+          <p className="mt-2 text-[10.5px] font-semibold text-mute">{photos.length}/4 captured{capturing ? " — shutter open…" : photos.length >= 4 ? " · tap any thumbnail to retake" : ""}</p>
         </Step>
         <Step n={4} title="Customer information" done={!!cust.name.trim() && !!cust.phone.trim()}>
           <div className="grid gap-2.5 sm:grid-cols-2">
