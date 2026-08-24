@@ -1,9 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Op, OpType } from "../lib/types";
 import { actionableBy, age, fmtDT, OPS, OP_ORDER, ROLE_LABEL, STATUS_META, STAGES } from "../lib/types";
 import { useStore } from "../lib/store";
 import { taskCounts } from "../components/layout";
-import { Bars, Btn, Card, Icon, StatusPill, TonePill, useRoute } from "../components/ui";
+import { Bars, Btn, Card, Icon, StatusPill, Tabs, TonePill, useRoute } from "../components/ui";
 
 const PENDING_SET = ["PENDING_ENERGY_MANAGER", "PENDING_GM", "PENDING_MD", "PENDING_SECRETARY", "SCHEDULED", "WAITING_ZVEND", "ZVEND_SUCCESS", "ZVEND_FAILED", "ASSIGNED", "RETURNED"];
 
@@ -44,6 +44,62 @@ export default function DashboardPage() {
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const facilityOf = (op: Op) => state.facilities.find(f => f.id === op.facilityId)?.name ?? "—";
+
+  const isTech = user.role === "TECHNICAL_MAN";
+  const [tab, setTab] = useState("records");
+  const recentRecords = state.operations.slice(0, 6);
+  const recentAudit = state.audit.slice(0, 7);
+
+  const recordsTable = (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[620px] text-left">
+        <thead><tr className="bg-paper text-[10px] font-extrabold tracking-widest text-mute">
+          <th className="px-4 py-2">TRANSACTION</th><th className="px-4 py-2">OPERATION</th><th className="px-4 py-2">METER</th><th className="px-4 py-2">STAGE</th><th className="px-4 py-2">STATUS</th>
+        </tr></thead>
+        <tbody>
+          {recentRecords.map(op => (
+            <tr key={op.id} onClick={() => nav(`${OPS[op.type].path}/${op.id}`)} className="cursor-pointer border-t border-line/70 transition-colors hover:bg-paper">
+              <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{op.txn}</td>
+              <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[op.type].icon} size={13} className="text-volt2" />{OPS[op.type].short}</span></td>
+              <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
+              <td className="px-4 py-2.5 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
+              <td className="px-4 py-2.5"><StatusPill status={op.status} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const auditList = (
+    <div className="divide-y divide-line/70">
+      {recentAudit.map(a => (
+        <div key={a.id} className="px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-volt" />
+            <p className="min-w-0 flex-1 truncate text-[12px] font-bold">{a.action.replace(/_/g, " ")}</p>
+            <span className="font-mono text-[9.5px] text-mute">{age(a.at)}</span>
+          </div>
+          <p className="mt-0.5 truncate pl-3.5 text-[11px] text-mute">{a.detail}</p>
+        </div>
+      ))}
+    </div>
+  );
+
+  const chainList = (
+    <div className="p-4">
+      <p className="mb-3 text-[11.5px] text-mute">Universal approval order for all five operations:</p>
+      <div className="space-y-1.5">
+        {["Secretary / Initiator", "Energy Manager", "General Manager", "Managing Director", "ZVend (where applicable)", "Secretary / Technical Man"].map((s, i, arr) => (
+          <div key={s} className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold text-volt tnum">{i + 1}</span>
+            <span className="text-[12px] font-bold text-ink2">{s}</span>
+            {i < arr.length - 1 && <span className="ml-auto text-[10px] text-mute">↓</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="mx-auto max-w-[1240px] space-y-5">
@@ -178,28 +234,29 @@ export default function DashboardPage() {
             </Card>
           )}
 
-          {/* recent records */}
-          <Card className="anim-rise">
-            <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[15.5px] font-bold">Latest records</h2></div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[620px] text-left">
-                <thead><tr className="bg-paper text-[10px] font-extrabold tracking-widest text-mute">
-                  <th className="px-4 py-2">TRANSACTION</th><th className="px-4 py-2">OPERATION</th><th className="px-4 py-2">METER</th><th className="px-4 py-2">STAGE</th><th className="px-4 py-2">STATUS</th>
-                </tr></thead>
-                <tbody>
-                  {state.operations.slice(0, 6).map(op => (
-                    <tr key={op.id} onClick={() => nav(`${OPS[op.type].path}/${op.id}`)} className="cursor-pointer border-t border-line/70 transition-colors hover:bg-paper">
-                      <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{op.txn}</td>
-                      <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[op.type].icon} size={13} className="text-volt2" />{OPS[op.type].short}</span></td>
-                      <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
-                      <td className="px-4 py-2.5 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
-                      <td className="px-4 py-2.5"><StatusPill status={op.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          {/* latest records — tabbed ledger for the Technical Man */}
+          {isTech ? (
+            <Card className="anim-rise">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+                <h2 className="font-display text-[15.5px] font-bold">Operations ledger</h2>
+                <Tabs active={tab} onChange={setTab} tabs={[
+                  { key: "records", label: "Latest records", count: recentRecords.length },
+                  { key: "audit", label: "Audit events", count: recentAudit.length },
+                  { key: "chain", label: "Workflow chain" },
+                ]} />
+              </div>
+              <div key={tab} className="anim-fade">
+                {tab === "records" && recordsTable}
+                {tab === "audit" && auditList}
+                {tab === "chain" && chainList}
+              </div>
+            </Card>
+          ) : (
+            <Card className="anim-rise">
+              <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[15.5px] font-bold">Latest records</h2></div>
+              {recordsTable}
+            </Card>
+          )}
         </div>
 
         {/* right column */}
@@ -212,35 +269,19 @@ export default function DashboardPage() {
             <Bars data={days} height={74} />
           </Card>
 
-          <Card className="anim-rise">
-            <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[14.5px] font-bold">Recent audit events</h2></div>
-            <div className="divide-y divide-line/70">
-              {state.audit.slice(0, 7).map(a => (
-                <div key={a.id} className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-volt" />
-                    <p className="min-w-0 flex-1 truncate text-[12px] font-bold">{a.action.replace(/_/g, " ")}</p>
-                    <span className="font-mono text-[9.5px] text-mute">{age(a.at)}</span>
-                  </div>
-                  <p className="mt-0.5 truncate pl-3.5 text-[11px] text-mute">{a.detail}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
+          {!isTech && (
+            <>
+              <Card className="anim-rise">
+                <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[14.5px] font-bold">Recent audit events</h2></div>
+                {auditList}
+              </Card>
 
-          <Card className="p-4 anim-rise">
-            <h2 className="font-display text-[14.5px] font-bold">Workflow chain</h2>
-            <p className="mt-1 text-[11.5px] text-mute">Universal approval order for all five operations:</p>
-            <div className="mt-3 space-y-1.5">
-              {["Secretary / Initiator", "Energy Manager", "General Manager", "Managing Director", "ZVend (where applicable)", "Secretary / Technical Man"].map((s, i, arr) => (
-                <div key={s} className="flex items-center gap-2.5">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold text-volt tnum">{i + 1}</span>
-                  <span className="text-[12px] font-bold text-ink2">{s}</span>
-                  {i < arr.length - 1 && <span className="ml-auto text-[10px] text-mute">↓</span>}
-                </div>
-              ))}
-            </div>
-          </Card>
+              <Card className="anim-rise">
+                <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[14.5px] font-bold">Workflow chain</h2></div>
+                {chainList}
+              </Card>
+            </>
+          )}
         </div>
       </div>
     </div>
