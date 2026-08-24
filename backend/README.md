@@ -137,13 +137,13 @@ Accept:          application/json
 Idempotency-Key: zvend:{transaction}:{attempt}  # e.g. zvend:ZADM-INS-20260213-000001:1
 ```
 
-**1. INSTALL** — `POST {ZVEND_BASE_URL}/v1/meter-installations`
+**1. INSTALL** — `POST {ZVEND_BASE_URL}/v1/meters/install`
 
 ```json
 { "meter_number": "45039813401", "facility": "FAC-IKY" }
 ```
 
-**2. ACTIVATE** — `POST {ZVEND_BASE_URL}/v1/meter-activations`
+**2. ACTIVATE** — `POST {ZVEND_BASE_URL}/v1/meters/activate`
 
 ```json
 {
@@ -160,13 +160,13 @@ Idempotency-Key: zvend:{transaction}:{attempt}  # e.g. zvend:ZADM-INS-20260213-0
 
 Null/empty fields are dropped (`array_filter`) before sending.
 
-**3. TAMPER** — `POST {ZVEND_BASE_URL}/v1/meter-tamper-codes`
+**3. TAMPER** — `POST {ZVEND_BASE_URL}/v1/meters/tamper-code`
 
 ```json
 { "meter_number": "45039813339" }
 ```
 
-**4. CLEAR** — `POST {ZVEND_BASE_URL}/v1/meter-clear-codes`
+**4. CLEAR** — `POST {ZVEND_BASE_URL}/v1/meters/clear-code`
 
 ```json
 { "meter_number": "45039813339" }

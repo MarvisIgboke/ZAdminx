@@ -11,6 +11,7 @@ import ApprovalsPage from "./pages/Approvals";
 import NotificationsPage, { HistoryPage } from "./pages/Notifications";
 import { FacilitiesPage, FacilityDetailPage, CustomersPage, CustomerDetailPage, MetersPage } from "./pages/DataPages";
 import ReportsPage from "./pages/Reports";
+import ApiReferencePage from "./pages/ApiReference";
 import AdminPage from "./pages/Admin";
 import { useEffect } from "react";
 
@@ -66,6 +67,7 @@ function Router() {
     case "customers": page = can("customers.view") ? (second ? <CustomerDetailPage id={second} /> : <CustomersPage />) : <AccessDenied perm="customers.view" />; break;
     case "meters": page = can("meters.view") ? <MetersPage /> : <AccessDenied perm="meters.view" />; break;
     case "reports": page = can("reports.view") ? <ReportsPage /> : <AccessDenied perm="reports.view" />; break;
+    case "api-docs": page = <ApiReferencePage />; break;
     case "admin": page = <AdminPage tab={second} />; break;
     default: page = (
       <div className="mx-auto max-w-xl">
