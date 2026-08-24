@@ -8,6 +8,7 @@ import { LoginPage, DashboardPage, ApprovalsPage, NotificationsPage, HistoryPage
 import { OperationListPage, NewInstallationPage, RequestCodePage, StartActivationPage, ScheduleInspectionPage, OperationDetailPage } from "./pages/ops";
 import { FacilitiesPage, FacilityDetailPage, CustomersPage, CustomerDetailPage, MetersPage, ReportsPage } from "./pages/data";
 import AdminPage, { ApiReferencePage, DatabaseSetupPage } from "./pages/admin";
+import ZVendIntegrationPage from "./pages/zvend";
 
 function AccessDenied({ perm }: { perm: string }) {
   const { nav } = useRoute();
@@ -58,6 +59,7 @@ function Router() {
     case "customers": page = can("customers.view") ? (second ? <CustomerDetailPage id={second} /> : <CustomersPage />) : <AccessDenied perm="customers.view" />; break;
     case "meters": page = can("meters.view") ? <MetersPage /> : <AccessDenied perm="meters.view" />; break;
     case "reports": page = can("reports.view") ? <ReportsPage /> : <AccessDenied perm="reports.view" />; break;
+    case "zvend": page = can("admin.api") ? <ZVendIntegrationPage /> : <AccessDenied perm="admin.api" />; break;
     case "api-docs": page = user.role === "SUPER_ADMIN" ? <ApiReferencePage /> : <AccessDenied perm="api_reference.view" />; break;
     case "admin": page = second === "database" ? (can("admin.database") ? <DatabaseSetupPage /> : <AccessDenied perm="admin.database" />) : <AdminPage tab={second} />; break;
     default: page = (

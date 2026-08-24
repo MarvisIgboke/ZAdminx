@@ -643,13 +643,23 @@ function FieldExecution({ opId }: { opId: string }) {
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {labels.map(l => {
             const p = op.photos.find(x => x.label === l);
-            return p ? <img key={l} src={p.dataUrl} alt={l} className="aspect-[4/3] w-full rounded-lg border border-line object-cover" />
-              : <button key={l} onClick={() => addPhoto(op.id, { id: Math.random().toString(36).slice(2), label: l, dataUrl: snapPhoto(l, op.meterNumber, op.gps?.lat, op.gps?.lng), at: Date.now(), lat: op.gps?.lat, lng: op.gps?.lng })}
-                className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-colors hover:border-volt hover:bg-voltsoft">
+            return p ? (
+              <button key={l} onClick={() => setPhotoFor(l)} title="Tap to retake" className="group relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line">
+                <img src={p.dataUrl} alt={l} className="anim-fade h-full w-full object-cover" />
+                <span className="absolute inset-0 flex items-end justify-center bg-ink/0 pb-1 opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100">
+                  <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-paper">RETAKEN ↺</span>
+                </span>
+              </button>
+            ) : (
+              <button key={l} onClick={() => setPhotoFor(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-all hover:-translate-y-0.5 hover:border-volt hover:bg-voltsoft active:translate-y-0">
                 <Icon name="camera" size={16} className="text-mute" /><span className="px-1 text-center text-[9.5px] font-extrabold text-ink2">{l}</span>
-              </button>;
+              </button>
+            );
           })}
         </div>
+        <p className="mt-1.5 text-[10.5px] font-semibold text-mute">{op.photos.length}/4 · tap a tile to open the camera</p>
+        {photoFor && <PhotoCapture label={photoFor} meter={op.meterNumber} lat={op.gps?.lat} lng={op.gps?.lng} onClose={() => setPhotoFor(null)}
+          onCapture={url => { addPhoto(op.id, { id: Math.random().toString(36).slice(2), label: photoFor, dataUrl: url, at: Date.now(), lat: op.gps?.lat, lng: op.gps?.lng }); setPhotoFor(null); }} />}
       </div>
       {err && <p className="flex items-center gap-2 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
       <Btn variant="ok" icon="check" size="lg" className="w-full" disabled={!ready} onClick={finish}>COMPLETE INSTALLATION</Btn>

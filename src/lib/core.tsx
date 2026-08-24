@@ -338,6 +338,7 @@ interface StoreCtx {
   markRead: (id: string) => void; markAllRead: () => void;
   auditCode: (opId: string, action: string) => void; saveSettings: (p: Partial<Settings>) => void;
   saveZvend: (p: Partial<Settings["zvend"]>) => void; togglePerm: (r: Role, p: string) => void;
+  testZvend: (endpoint: string, method: string, payload: unknown, fail?: boolean) => Promise<{ ok: boolean; code: string; durationMs: number; body: Record<string, unknown> }>;
   addUser: (d: { name: string; email: string; role: Role }) => void; setUserActive: (id: string, a: boolean) => void;
   setDelegation: (d: Delegation | null) => void; syncFacilities: () => void; pushAudit: (action: string, detail: string) => void;
 }
@@ -559,6 +560,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addUser: StoreCtx["addUser"] = d => mutate(s => ({ ...s, users: [...s.users, { id: uid(), ...d, active: true }], audit: [...mkAudit(s, "user_created", `User ${d.name} (${ROLE_LABEL[d.role]}) created.`), ...s.audit] }));
   const setUserActive: StoreCtx["setUserActive"] = (id, a) => mutate(s => ({ ...s, users: s.users.map(u => u.id === id ? { ...u, active: a } : u), audit: [...mkAudit(s, "user_change", `User ${a ? "activated" : "deactivated"}.`), ...s.audit] }));
   const setDelegation: StoreCtx["setDelegation"] = d => mutate(s => ({ ...s, delegation: d, audit: [...mkAudit(s, d ? "delegation_created" : "delegation_revoked", d ? `MD delegation to GM (${new Date(d.from).toLocaleDateString()} → ${new Date(d.to).toLocaleDateString()}).` : "Delegation revoked."), ...s.audit] }));
+  /* ---- ZVend integration tester (console) — writes real api/audit logs ---- */
+  const testZvend: StoreCtx["testZvend"] = (endpoint, method, payload, fail) => new Promise(resolve => {
+    const latency = Math.floor(240 + Math.random() * 420);
+    setTimeout(() => {
+      mutate(s => {
+        const willFail = fail || Math.random() < 0.06;
+        const code = willFail ? "91" : "00";
+        const log: ApiLog = { id: uid(), at: Date.now(), user: s.users.find(u => u.id === s.currentUserId)?.name ?? "ZVend Gateway", method, endpoint, status: willFail ? "failed" : "success", code, durationMs: latency };
+        return { ...s, apiLogs: [log, ...s.apiLogs], audit: [...mkAudit(s, willFail ? "zvend_failed" : "zvend_success", `ZVend ${method} ${endpoint} → ${code} (${latency} ms) · integration console.`), ...s.audit] };
+      });
+      const body: Record<string, unknown> = fail || Math.random() < 0.06
+        ? { response_code: "91", message: "Upstream vending gateway timeout", reference: null }
+        : endpoint.includes("install") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, tamper_code: gen20(), clear_code: gen20() }
+        : endpoint.includes("tamper") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, tamper_code: gen20() }
+        : endpoint.includes("clear") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, clear_code: gen20() }
+        : endpoint.includes("activate") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, token_balance: 0 }
+        : { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, data: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, amount: Math.floor(2000 + Math.random() * 18000), at: new Date(Date.now() - i * 86400000 * 6).toISOString().slice(0, 10) })) };
+      resolve({ ok: body.response_code === "00", code: String(body.response_code), durationMs: latency, body });
+    }, latency);
+  });
+
   const syncFacilities: StoreCtx["syncFacilities"] = () => { mutate(s => ({ ...s, facilities: s.facilities.map(f => ({ ...f, syncedAt: Date.now() })), audit: [...mkAudit(s, "sync_completed", `ZVend facility sync: ${s.facilities.length} processed, 0 failed.`), ...s.audit] })); toast("Facilities refreshed from ZVend."); };
   const pushAudit: StoreCtx["pushAudit"] = (action, detail) => mutate(s => ({ ...s, audit: [...mkAudit(s, action, detail), ...s.audit] }));
 
@@ -566,7 +588,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state, user, can, online, syncing, delegation, toasts, toast, dismissToast,
     login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode,
     saveScan, saveGps, addPhoto, saveCustomer, saveVideo, startField, markRead, markAllRead,
-    auditCode, saveSettings, saveZvend, togglePerm, addUser, setUserActive, setDelegation, syncFacilities, pushAudit,
+    auditCode, saveSettings, saveZvend, togglePerm, addUser, setUserActive, setDelegation, syncFacilities, pushAudit, testZvend,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

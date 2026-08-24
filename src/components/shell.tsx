@@ -32,6 +32,7 @@ const NAV: { section: string; items: { label: string; to: string; icon: string; 
       { label: "Customers", to: "customers", icon: "users", perm: "customers.view" },
       { label: "Meters", to: "meters", icon: "gauge", perm: "meters.view" },
       { label: "Reports", to: "reports", icon: "chart", perm: "reports.view" },
+      { label: "ZVend Integration", to: "zvend", icon: "plug", perm: "admin.api" },
       { label: "API Reference", to: "api-docs", icon: "doc", roles: ["SUPER_ADMIN"] as Role[] },
     ],
   },
