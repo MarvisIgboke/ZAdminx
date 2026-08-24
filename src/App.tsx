@@ -67,7 +67,7 @@ function Router() {
     case "customers": page = can("customers.view") ? (second ? <CustomerDetailPage id={second} /> : <CustomersPage />) : <AccessDenied perm="customers.view" />; break;
     case "meters": page = can("meters.view") ? <MetersPage /> : <AccessDenied perm="meters.view" />; break;
     case "reports": page = can("reports.view") ? <ReportsPage /> : <AccessDenied perm="reports.view" />; break;
-    case "api-docs": page = <ApiReferencePage />; break;
+    case "api-docs": page = user.role === "SUPER_ADMIN" ? <ApiReferencePage /> : <AccessDenied perm="api_reference.view" />; break;
     case "admin": page = <AdminPage tab={second} />; break;
     default: page = (
       <div className="mx-auto max-w-xl">
