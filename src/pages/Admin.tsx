@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import DatabaseSetupPage from "./DatabaseSetup";
 import type { Role } from "../lib/types";
 import { fmtDT, fmtDate, PERMS, ROLE_LABEL, activeDelegation } from "../lib/types";
 import { useStore } from "../lib/store";
@@ -13,6 +14,7 @@ export default function AdminPage({ tab }: { tab: string }) {
     can("admin.users") && { key: "users", label: "Users" },
     can("admin.roles") && { key: "roles", label: "Roles & Permissions" },
     can("admin.api") && { key: "api", label: "API Configuration" },
+    can("admin.database") && { key: "database", label: "Database" },
     can("admin.apilogs") && { key: "api-logs", label: "API Logs" },
     can("admin.audit") && { key: "audit", label: "Audit Logs" },
     (can("admin.settings") || user?.role === "SUPER_ADMIN") && { key: "settings", label: "System Settings" },
@@ -35,6 +37,7 @@ export default function AdminPage({ tab }: { tab: string }) {
       <SectionHead title="Administration" sub="Users, RBAC matrix, ZVend configuration, logs and system rules — every change is audited." />
       <div className="mb-4"><Tabs active={active} onChange={k => nav(`admin/${k}`)} tabs={tabs} /></div>
       {active === "users" && <UsersTab />}
+      {active === "database" && <DatabaseSetupPage />}
       {active === "roles" && <RolesTab />}
       {active === "api" && <ApiTab />}
       {active === "api-logs" && <ApiLogsTab />}

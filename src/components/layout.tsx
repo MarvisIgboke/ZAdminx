@@ -94,6 +94,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             {can("admin.apilogs") && <Item it={{ label: "API Logs", to: "admin/api-logs", icon: "list" }} />}
             {can("admin.audit") && <Item it={{ label: "Audit Logs", to: "admin/audit", icon: "history" }} />}
             {(can("admin.settings") || user.role === "SUPER_ADMIN") && <Item it={{ label: "System Settings", to: "admin/settings", icon: "settings" }} />}
+            {can("admin.database") && <Item it={{ label: "Database", to: "admin/database", icon: "db" }} />}
           </Section>
         )}
       </div>
