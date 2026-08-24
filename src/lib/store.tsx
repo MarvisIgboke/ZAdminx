@@ -4,7 +4,7 @@ import type {
   AppState, AuditEntry, CustomerInfo, Delegation, GpsRec, Notif, Op, OpStatus, OpType,
   PhotoRec, Role, ScanRec, User, WorkflowComment,
 } from "./types";
-import { activeDelegation, OPS, STAGES, TERMINAL, uid, gen20, actionableBy } from "./types";
+import { activeDelegation, OPS, PERMS, STAGES, TERMINAL, uid, gen20, actionableBy } from "./types";
 import { buildSeed } from "./seed";
 
 const LS_KEY = "zadmin:v3";
