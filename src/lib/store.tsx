@@ -14,7 +14,13 @@ function load(): AppState {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const s = JSON.parse(raw) as AppState;
-      if (s.v === 3) return s;
+      if (s.v === 3) {
+        // Super Admin always holds the full permission catalogue — a newly
+        // introduced permission (e.g. admin.database) applies immediately,
+        // even when the persisted matrix predates it.
+        s.permissionMatrix = { ...s.permissionMatrix, SUPER_ADMIN: [...PERMS] };
+        return s;
+      }
     }
   } catch { /* fall through to seed */ }
   return buildSeed();
