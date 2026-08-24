@@ -129,10 +129,26 @@ export function BarcodeScanner({ title = "Scan barcode", hint, onClose, onDetect
   );
 }
 
-/* ================= Synthetic field photo ================= */
+/* ================= Field photo capture ================= */
+/* Always returns a VALID data URL — a malformed fallback (missing "data:"
+   prefix) renders as a broken image, which is what made captures look dead. */
+const photoFallback = (label: string) =>
+  "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'>` +
+    `<rect width='640' height='480' fill='#232c26'/>` +
+    `<g stroke='rgba(232,155,46,0.16)'><path d='M0 0H640V480H0Z' fill='none'/></g>` +
+    `<rect x='170' y='110' width='300' height='220' fill='#2c3830' stroke='#e89b2e' stroke-width='3'/>` +
+    `<text x='320' y='222' fill='#e8e6da' font-family='monospace' font-size='21' text-anchor='middle'>ZAROX FIELD PHOTO</text>` +
+    `<text x='320' y='254' fill='#e89b2e' font-family='monospace' font-size='15' text-anchor='middle'>${label.toUpperCase()}</text>` +
+    `<text x='320' y='452' fill='#9aa79e' font-family='monospace' font-size='12' text-anchor='middle'>${new Date().toLocaleString()}</text>` +
+    `</svg>`
+  );
+
 export function snapPhoto(label: string, meter: string, lat?: number, lng?: number): string {
-  const c = document.createElement("canvas"); c.width = 640; c.height = 480;
-  const x = c.getContext("2d")!;
+  try {
+    const c = document.createElement("canvas"); c.width = 640; c.height = 480;
+    const x = c.getContext("2d");
+    if (!x) return photoFallback(label);
   const g = x.createLinearGradient(0, 0, 640, 480);
   g.addColorStop(0, "#232c26"); g.addColorStop(1, "#10160f");
   x.fillStyle = g; x.fillRect(0, 0, 640, 480);
@@ -146,10 +162,151 @@ export function snapPhoto(label: string, meter: string, lat?: number, lng?: numb
   x.fillStyle = "#e8e6da"; x.font = "bold 15px monospace";
   for (let i = 0; i < 24; i++) x.fillRect(200 + i * 10, 230, i % 3 === 0 ? 5 : 2, 55);
   x.fillStyle = "#e89b2e"; x.font = "bold 18px sans-serif"; x.fillText("ZAROX · " + label.toUpperCase(), 24, 40);
-  x.fillStyle = "#9aa79e"; x.font = "12px monospace";
-  x.fillText(new Date().toLocaleString(), 24, 452);
-  if (lat) x.fillText(`${lat.toFixed(5)}, ${lng?.toFixed(5)}`, 470, 452);
-  return c.toDataURL("image/jpeg", 0.82);
+    x.fillStyle = "#9aa79e"; x.font = "12px monospace";
+    x.fillText(new Date().toLocaleString(), 24, 452);
+    if (lat) x.fillText(`${lat.toFixed(5)}, ${lng?.toFixed(5)}`, 470, 452);
+    return c.toDataURL("image/jpeg", 0.82);
+  } catch {
+    return photoFallback(label);
+  }
+}
+
+/* Real camera photo capture: live viewfinder → shutter → frame grab with a
+   ZAROX HUD overlay (label, meter, timestamp, GPS). Falls back to a
+   simulated capture when no camera is available so the field flow never
+   dead-ends. */
+export function PhotoCapture({ label, meter, lat, lng, onCapture, onClose }: {
+  label: string; meter?: string; lat?: number; lng?: number;
+  onCapture: (dataUrl: string) => void; onClose: () => void;
+}) {
+  const [cam, setCam] = useState<"starting" | "live" | "error">("starting");
+  const [errMsg, setErrMsg] = useState("");
+  const [flashOn, setFlashOn] = useState(false);
+  const [bootKey, setBootKey] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw { name: "NoMediaDevices" };
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } },
+          audio: false,
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        const v = videoRef.current;
+        if (v) { v.srcObject = stream; await v.play().catch(() => { /* autoplay quirks — frames still render */ }); }
+        if (!cancelled) setCam("live");
+      } catch (e) {
+        if (cancelled) return;
+        const name = (e as { name?: string })?.name ?? "";
+        setCam("error");
+        setErrMsg(
+          name === "NotAllowedError" ? "Camera permission denied. Allow camera access and retry — or use simulated capture below."
+            : name === "NotFoundError" ? "No camera was found on this device. Use simulated capture below."
+            : name === "NotReadableError" ? "The camera is busy in another application. Close it and retry, or use simulated capture."
+            : "The camera could not be started. Use simulated capture below.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    };
+  }, [bootKey]);
+
+  const finish = (dataUrl: string) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setFlashOn(true);
+    setTimeout(() => onCapture(dataUrl), 330);
+  };
+
+  const shoot = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) return;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    const x = c.getContext("2d");
+    if (!x) { finish(snapPhoto(label, meter ?? "", lat, lng)); return; }
+    x.drawImage(v, 0, 0);
+    // HUD overlay -------------------------------------------------------
+    const bar = Math.max(44, Math.round(c.height * 0.09));
+    x.fillStyle = "rgba(10,14,11,0.62)";
+    x.fillRect(0, 0, c.width, bar); x.fillRect(0, c.height - bar, c.width, bar);
+    x.fillStyle = "#e89b2e";
+    x.font = `bold ${Math.round(bar * 0.42)}px monospace`;
+    x.fillText("ZAROX · " + label.toUpperCase(), 16, bar * 0.66);
+    x.fillStyle = "#e8e6da";
+    x.font = `${Math.round(bar * 0.3)}px monospace`;
+    const meta = [new Date().toLocaleString(), meter ? `MTR ${meter}` : "", lat ? `${lat.toFixed(5)}, ${lng?.toFixed(5)}` : ""].filter(Boolean).join("  ·  ");
+    x.fillText(meta, 16, c.height - bar * 0.34);
+    let out: string;
+    try { out = c.toDataURL("image/jpeg", 0.85); } catch { out = snapPhoto(label, meter ?? "", lat, lng); }
+    finish(out);
+  };
+
+  return (
+    <Modal open onClose={onClose} title={<span className="flex items-center gap-2"><Icon name="camera" size={16} className="text-volt2" />Capture · {label}</span>} wide>
+      <div className="space-y-3">
+        <div className="relative aspect-video overflow-hidden rounded-xl bg-side">
+          <video ref={videoRef} playsInline muted className={`absolute inset-0 h-full w-full object-cover ${cam === "live" ? "" : "opacity-0"}`} />
+          {cam === "live" && !flashOn && (
+            <div className="pointer-events-none absolute inset-0">
+              <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-volt" />
+              <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-volt" />
+              <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-volt" />
+              <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-volt" />
+              <span className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35" />
+              <span className="absolute left-1/2 top-1/2 h-1 w-5 -translate-x-1/2 -translate-y-1/2 bg-white/60" />
+              <span className="absolute left-1/2 top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 bg-white/60" />
+            </div>
+          )}
+          {cam === "live" && !flashOn && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 px-4 py-2.5">
+              <span className="h-2 w-2 rounded-full bg-danger recblink" />
+              <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#e8e6da]">LIVE · {label.toUpperCase()}{meter ? ` · MTR ${meter}` : ""}</p>
+            </div>
+          )}
+          {cam === "starting" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5">
+              <Icon name="camera" size={26} className="spin text-volt" />
+              <p className="font-mono text-[11px] font-bold tracking-[0.18em] text-[#93a29a]">REQUESTING CAMERA…</p>
+            </div>
+          )}
+          {cam === "error" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-dangersoft text-danger"><Icon name="alert" size={18} /></span>
+              <p className="max-w-sm text-[12.5px] font-semibold leading-snug text-[#c9d3cc]">{errMsg}</p>
+              <div className="flex gap-2">
+                <Btn size="sm" variant="outline" icon="camera" onClick={() => setBootKey(k => k + 1)}>Retry camera</Btn>
+                <Btn size="sm" variant="ok" icon="check" onClick={() => finish(snapPhoto(label, meter ?? "", lat, lng))}>Simulated capture</Btn>
+              </div>
+            </div>
+          )}
+          {flashOn && <div className="anim-fade absolute inset-0 z-10 flex items-center justify-center bg-white"><Icon name="check" size={30} className="text-ok" /></div>}
+        </div>
+        {cam === "live" && !flashOn && (
+          <div className="flex items-center justify-center gap-6">
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <button
+              onClick={shoot}
+              title="Take photo"
+              className="group flex h-16 w-16 items-center justify-center rounded-full border-4 border-ink bg-card transition-transform hover:scale-105 active:scale-90"
+            >
+              <span className="h-11 w-11 rounded-full bg-volt transition-all group-hover:bg-volt2 group-active:h-9 group-active:w-9" />
+            </button>
+            <span className="w-[72px] text-center font-mono text-[9.5px] font-bold tracking-wider text-mute">SHUTTER</span>
+          </div>
+        )}
+        {cam === "starting" && <p className="text-center text-[11px] font-semibold text-mute">Waiting for camera access…</p>}
+      </div>
+    </Modal>
+  );
 }
 
 /* ================= Timeline ================= */

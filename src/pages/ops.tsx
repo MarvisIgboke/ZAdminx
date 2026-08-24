@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { CustomerInfo, GpsRec, OpType, PhotoRec } from "../lib/core";
 import { age, fmtDate, fmtDT, OPS, STAGES, STATUS_META, TERMINAL } from "../lib/core";
 import { useStore } from "../lib/core";
-import { BarcodeScanner, snapPhoto } from "../components/workflow";
+import { BarcodeScanner, PhotoCapture } from "../components/workflow";
 import { Btn, Card, EmptyState, Field, Icon, Pagination, SectionHead, Select, StatusPill, TextInput, Textarea, TonePill, useRoute } from "../components/ui";
 
 /* ================= List (all five operations) ================= */
@@ -248,7 +248,7 @@ export function StartActivationPage() {
   const [gps, setGps] = useState<GpsRec | null>(null);
   const [gpsBusy, setGpsBusy] = useState(false);
   const [photos, setPhotos] = useState<PhotoRec[]>([]);
-  const [capturing, setCapturing] = useState<string | null>(null);
+  const [photoFor, setPhotoFor] = useState<string | null>(null);
   const [cust, setCust] = useState<CustomerInfo>({ name: "", phone: "", email: "", address: "" });
   const [comment, setComment] = useState("");
   const [err, setErr] = useState("");
@@ -276,18 +276,11 @@ export function StartActivationPage() {
       setGpsBusy(false);
     }, 1400);
   };
-  /* Photo capture: brief shutter feedback per tile, guarded canvas call so a
-     capture can never silently no-op, and retake by tapping a thumbnail. */
-  const snap = (label: string) => {
-    if (capturing) return;
-    setCapturing(label);
-    window.setTimeout(() => {
-      let url: string;
-      try { url = snapPhoto(label, meter, gps?.lat, gps?.lng); }
-      catch { url = FALLBACK_PHOTO; }
-      setPhotos(p => [...p.filter(x => x.label !== label), { id: Math.random().toString(36).slice(2), label, dataUrl: url, at: Date.now(), lat: gps?.lat, lng: gps?.lng }]);
-      setCapturing(null);
-    }, 420);
+  /* Photo capture opens the real camera (PhotoCapture modal); the grabbed
+     frame — or a simulated frame when no camera exists — lands here. */
+  const onPhoto = (label: string, dataUrl: string) => {
+    setPhotoFor(null);
+    setPhotos(p => [...p.filter(x => x.label !== label), { id: Math.random().toString(36).slice(2), label, dataUrl, at: Date.now(), lat: gps?.lat, lng: gps?.lng }]);
   };
   const submit = () => {
     if (!meter) { setErr("Scan or select the meter to activate."); return; }
@@ -329,32 +322,25 @@ export function StartActivationPage() {
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             {["Meter Front", "Meter Installation", "Meter Barcode", "Environment"].map(l => {
               const p = photos.find(x => x.label === l);
-              const busy = capturing === l;
-              if (busy) return (
-                <div key={l} className="relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-volt bg-side">
-                  <span className="anim-shutter absolute inset-0 bg-white" />
-                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-                    <Icon name="camera" size={17} className="text-volt livedot" />
-                    <span className="font-mono text-[9px] font-bold tracking-widest text-[#9aa79e]">CAPTURING…</span>
-                  </span>
-                </div>
-              );
               return p ? (
-                <button key={l} onClick={() => snap(l)} title="Tap to retake" className="group relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line">
-                  <img src={p.dataUrl} alt={l} className="anim-pop h-full w-full object-cover" />
+                <button key={l} onClick={() => setPhotoFor(l)} title="Tap to retake" className="group relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line">
+                  <img src={p.dataUrl} alt={l} className="anim-fade h-full w-full object-cover" />
                   <span className="absolute inset-0 flex items-end justify-center bg-ink/0 pb-1 opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100">
                     <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-paper">RETAKEN ↺</span>
                   </span>
                   <span className="absolute left-1 top-1 rounded bg-ok px-1 py-px text-[8.5px] font-extrabold tracking-wider text-white">✓ {new Date(p.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                 </button>
               ) : (
-                <button key={l} onClick={() => snap(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-all hover:-translate-y-0.5 hover:border-volt hover:bg-voltsoft active:translate-y-0">
+                <button key={l} onClick={() => setPhotoFor(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-all hover:-translate-y-0.5 hover:border-volt hover:bg-voltsoft active:translate-y-0">
                   <Icon name="camera" size={16} className="text-mute" /><span className="px-1 text-center text-[9.5px] font-extrabold text-ink2">{l}</span>
                 </button>
               );
             })}
           </div>
-          <p className="mt-2 text-[10.5px] font-semibold text-mute">{photos.length}/4 captured{capturing ? " — shutter open…" : photos.length >= 4 ? " · tap any thumbnail to retake" : ""}</p>
+          <p className="mt-2 text-[10.5px] font-semibold text-mute">{photos.length}/4 captured · tap a tile to open the camera{photos.length >= 4 ? " · retake any thumbnail" : ""}</p>
+          {photoFor && (
+            <PhotoCapture label={photoFor} meter={meter} lat={gps?.lat} lng={gps?.lng} onClose={() => setPhotoFor(null)} onCapture={url => onPhoto(photoFor, url)} />
+          )}
         </Step>
         <Step n={4} title="Customer information" done={!!cust.name.trim() && !!cust.phone.trim()}>
           <div className="grid gap-2.5 sm:grid-cols-2">
@@ -621,6 +607,7 @@ function FieldExecution({ opId }: { opId: string }) {
   const op = state.operations.find(o => o.id === opId)!;
   const [scanOpen, setScanOpen] = useState(false);
   const [gpsBusy, setGpsBusy] = useState(false);
+  const [photoFor, setPhotoFor] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const fac = state.facilities.find(f => f.id === op.facilityId);
   const max = state.settings.maxGpsAccuracyM;
