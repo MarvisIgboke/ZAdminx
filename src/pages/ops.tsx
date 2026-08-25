@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CustomerInfo, GpsRec, Op, OpType, PhotoRec, ZvendCatalogItem } from "../lib/core";
-import { age, fmtDate, fmtDT, OPS, powerLabel, STAGES, STATUS_META, TERMINAL } from "../lib/core";
+import { age, fmtDate, fmtDT, fmtNaira, OPS, powerLabel, STAGES, STATUS_META, TERMINAL } from "../lib/core";
 import { useStore } from "../lib/core";
 import { BarcodeScanner, PhotoCapture } from "../components/workflow";
 import { Btn, Card, EmptyState, Field, Icon, Pagination, SectionHead, Select, StatusPill, TextInput, Textarea, TonePill, useRoute } from "../components/ui";
@@ -43,6 +43,12 @@ const chipDefs: Record<OpType, { label: string; match: (s: string) => boolean }[
     { label: "Completed", match: s => s === "COMPLETED" },
     { label: "Rejected / Returned", match: s => ["REJECTED", "RETURNED"].includes(s) },
   ],
+  wallet: [
+    { label: "Pending", match: s => s === "PENDING" },
+    { label: "ZVend", match: s => ["WAITING_ZVEND", "ZVEND_FAILED"].includes(s) },
+    { label: "Completed", match: s => s === "COMPLETED" },
+    { label: "Rejected / Returned", match: s => ["REJECTED", "RETURNED"].includes(s) },
+  ],
 };
 
 export function OperationListPage({ type }: { type: OpType }) {
@@ -65,7 +71,7 @@ export function OperationListPage({ type }: { type: OpType }) {
 
   return (
     <div className="mx-auto max-w-[1240px]">
-      <SectionHead title={meta.label} sub={`${ops.length} records · ${meta.blurb}`} right={canNew && type !== "control" ? <Btn variant="volt" icon="plus" onClick={() => nav(newRoute)}>{newLabel}</Btn> : undefined} />
+      <SectionHead title={meta.label} sub={`${ops.length} records · ${meta.blurb}`} right={canNew && type !== "control" && type !== "wallet" ? <Btn variant="volt" icon="plus" onClick={() => nav(newRoute)}>{newLabel}</Btn> : undefined} />
       <div className="mb-4 flex flex-wrap gap-2 anim-rise">
         <button onClick={() => { setStatus("ALL"); setPage(1); }} className={`rounded-lg border px-3 py-1.5 text-[11.5px] font-extrabold transition-colors ${status === "ALL" ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink2 hover:border-ink/40"}`}>Total <span className="ml-1 font-mono tnum">{ops.length}</span></button>
         {chipDefs[type].map(c => (
@@ -593,6 +599,42 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
                   </span>
                 ) : (
                   <span className="rounded-xl border-2 border-dashed border-line2 px-4 py-2.5 font-mono text-[11px] font-bold text-mute">awaiting approval chain…</span>
+                )}
+              </div>
+              {(op.status === "ZVEND_FAILED" || op.status === "RETURNED") && <ControlResubmit op={op} failed={op.status === "ZVEND_FAILED"} />}
+            </Card>
+          )}
+
+          {type === "wallet" && (
+            <Card className="anim-rise p-4">
+              <p className="mb-3 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">WALLET TRANSACTION</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 ${op.action === "FUND" ? "border-[#c2ddcd] bg-oksoft" : "border-[#ecd9b8] bg-warnsoft/60"}`}>
+                  <Icon name={op.action === "FUND" ? "plus" : "minus"} size={16} className={op.action === "FUND" ? "text-ok" : "text-warn"} />
+                  <span>
+                    <span className="block font-display text-[16px] font-bold leading-tight">{op.action} {fmtNaira(op.amount ?? 0)}</span>
+                    <span className="font-mono text-[9.5px] font-bold text-mute">POST /v1/walletMgt/{op.meterNumber}/{op.action}/{op.amount}</span>
+                  </span>
+                </span>
+                <Icon name="arrowR" size={16} className="text-mute" />
+                {op.walletResult !== undefined ? (
+                  <span className="flex items-center gap-2 rounded-xl border-2 border-[#c2ddcd] bg-oksoft px-4 py-2.5">
+                    <Icon name="wallet" size={16} className="text-ok" />
+                    <span>
+                      <span className="block font-display text-[16px] font-bold leading-tight">NEW BALANCE {fmtNaira(op.walletResult)}</span>
+                      <span className="font-mono text-[9.5px] font-bold text-mute">executed by ZVend · ref {op.zvend?.ref}</span>
+                    </span>
+                  </span>
+                ) : op.status === "ZVEND_FAILED" ? (
+                  <span className="flex items-center gap-2 rounded-xl border-2 border-[#eac5be] bg-dangersoft px-4 py-2.5">
+                    <Icon name="alert" size={16} className="text-danger" />
+                    <span>
+                      <span className="block font-display text-[15px] font-bold leading-tight text-danger">EXECUTION FAILED · {op.zvend?.responseCode}</span>
+                      <span className="font-mono text-[9.5px] font-bold text-mute">bounced back to Secretary · balance unchanged</span>
+                    </span>
+                  </span>
+                ) : (
+                  <span className="rounded-xl border-2 border-dashed border-line2 px-4 py-2.5 font-mono text-[11px] font-bold text-mute">awaiting GM → MD approvals…</span>
                 )}
               </div>
               {(op.status === "ZVEND_FAILED" || op.status === "RETURNED") && <ControlResubmit op={op} failed={op.status === "ZVEND_FAILED"} />}

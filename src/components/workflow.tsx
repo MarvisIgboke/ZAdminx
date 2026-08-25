@@ -379,6 +379,7 @@ export function ApprovalPanel({ op }: { op: Op }) {
   if (op.type === "inspection" && stage.key === "EXECUTION") return null;
   if (op.type === "activation" && stage.key === "INITIATOR") return null;
   if (op.type === "control" && stage.key === "INITIATOR") return null;
+  if (op.type === "wallet" && stage.key === "INITIATOR") return null;
   const run = (d: Parameters<typeof decide>[1]) => {
     setErr(""); setBusy(d);
     setTimeout(() => { const e = decide(op.id, d, comment); if (e) setErr(e); else setComment(""); setBusy(null); }, 350);

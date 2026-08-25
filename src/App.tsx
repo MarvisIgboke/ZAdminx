@@ -7,6 +7,7 @@ import { Btn, Card, Icon, useRoute } from "./components/ui";
 import { LoginPage, DashboardPage, ApprovalsPage, NotificationsPage, HistoryPage } from "./pages/work";
 import { OperationListPage, NewInstallationPage, RequestCodePage, StartActivationPage, ScheduleInspectionPage, OperationDetailPage } from "./pages/ops";
 import { MeterControlPage } from "./pages/control";
+import { WalletMgtPage } from "./pages/wallet";
 import { FacilitiesPage, FacilityDetailPage, CustomersPage, CustomerDetailPage, MetersPage, ReportsPage } from "./pages/data";
 import AdminPage, { ApiReferencePage, DatabaseSetupPage } from "./pages/admin";
 import ZVendIntegrationPage from "./pages/zvend";
@@ -55,6 +56,7 @@ function Router() {
     case OPS.tamper.path: page = opDetail("tamper"); break;
     case OPS.clear.path: page = opDetail("clear"); break;
     case OPS.control.path: page = can("control.view") ? (second ? <OperationDetailPage type="control" id={second} /> : <MeterControlPage />) : <AccessDenied perm="control.view" />; break;
+    case OPS.wallet.path: page = can("wallet.view") ? (second ? <OperationDetailPage type="wallet" id={second} /> : <WalletMgtPage />) : <AccessDenied perm="wallet.view" />; break;
     case "meter-map": page = can("map.view") ? <MeterMapPage /> : <AccessDenied perm="map.view" />; break;
     case "approvals": page = can("approvals.view") ? <ApprovalsPage /> : <AccessDenied perm="approvals.view" />; break;
     case "notifications": page = can("notifications.view") ? <NotificationsPage /> : <AccessDenied perm="notifications.view" />; break;

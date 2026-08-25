@@ -412,6 +412,11 @@ function load(): AppState {
           s.powerStates = fresh.powerStates;
           s.powerSyncedAt = fresh.powerSyncedAt;
         }
+        if (!s.wallets) {
+          const fresh = buildSeed();
+          s.wallets = fresh.wallets;
+          s.walletSyncedAt = fresh.walletSyncedAt;
+        }
         (Object.keys(s.permissionMatrix) as Role[]).forEach(r => {
           if (!s.permissionMatrix[r].includes("map.view")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.view"];
           if ((r === "TECHNICAL_MAN" || r === "SUPER_ADMIN") && !s.permissionMatrix[r].includes("map.update")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.update"];
@@ -419,6 +424,10 @@ function load(): AppState {
           if (r === "SECRETARY") ctlView.push("control.create", "control.approve");
           if (r === "ENERGY_MANAGER" || r === "GENERAL_MANAGER" || r === "MD") ctlView.push("control.approve");
           ctlView.forEach(p => { if (!s.permissionMatrix[r].includes(p)) s.permissionMatrix[r] = [...s.permissionMatrix[r], p]; });
+          const wltView = ["wallet.view", "wallet.history"];
+          if (r === "SECRETARY") wltView.push("wallet.create");
+          if (r === "GENERAL_MANAGER" || r === "MD") wltView.push("wallet.approve");
+          wltView.forEach(p => { if (!s.permissionMatrix[r].includes(p)) s.permissionMatrix[r] = [...s.permissionMatrix[r], p]; });
         });
         return s;
       }
@@ -471,6 +480,8 @@ interface StoreCtx {
   updateLocate: (meterNumber: string, g: GpsRec) => Promise<{ ok: boolean; latencyMs: number; reference: string }>;
   syncPower: () => Promise<void>;
   createControl: (d: { meterNumber: string; facilityId: string; command: "1" | "0"; comment: string }) => Op | null;
+  syncWallet: () => Promise<void>;
+  createWallet: (d: { meterNumber: string; facilityId: string; action: "FUND" | "DEDUCT"; amount: number; comment: string }) => Op | null;
   addUser: (d: { name: string; email: string; role: Role }) => void; setUserActive: (id: string, a: boolean) => void;
   setDelegation: (d: Delegation | null) => void; syncFacilities: () => void; pushAudit: (action: string, detail: string) => void;
 }
@@ -525,6 +536,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const op = s.operations.find(o => o.id === opId);
         if (!op || op.status !== "WAITING_ZVEND") return s;
         const latencyMs = Math.floor(280 + Math.random() * 320);
+
+        /* ---- Wallet Mgt: synchronous ZVend execution -----------------------
+           success → registry balance flips, auto-complete;
+           failure → bounce back to the Secretary (stage 0). */
+        if (op.type === "wallet") {
+          const failed = Math.random() < 0.1;
+          const zv: ZvendRec = failed
+            ? { status: "failed", ref: "N/A", responseCode: "91", at: Date.now(), latencyMs }
+            : { status: "success", ref: `WLT-${Math.floor(10000 + Math.random() * 89999)}`, responseCode: "00", at: Date.now(), latencyMs };
+          const log: ApiLog = { id: uid(), at: Date.now(), user: "ZVend Gateway", method: "POST", txn: op.txn, status: failed ? "failed" : "success", code: zv.responseCode, durationMs: latencyMs, endpoint: `/v1/walletMgt/${op.meterNumber}/${op.action}/${op.amount}` };
+          if (failed) {
+            const bounced = touch(op, { status: "ZVEND_FAILED", zvend: zv, stageIdx: 0 });
+            return {
+              ...s,
+              operations: s.operations.map(o => o.id === opId ? bounced : o), apiLogs: [log, ...s.apiLogs],
+              audit: [...mkAudit(s, "zvend_failed", `Wallet ${op.action} ${op.txn} — ZVend execution FAILED (91). Bounced back to Secretary.`, op.txn), ...s.audit],
+              notifications: [mkNotif("SECRETARY", `Wallet ${op.action} FAILED for meter ${op.meterNumber} — bounced back to you.`, "zvend", bounced), ...s.notifications],
+            };
+          }
+          const cur = s.wallets.find(w => w.meterNumber === op.meterNumber);
+          const newBal = Math.max(0, (cur?.balance ?? 0) + (op.action === "FUND" ? op.amount! : -op.amount!));
+          const stages = STAGES.wallet;
+          const completed = touch(op, { status: "COMPLETED", zvend: zv, walletResult: newBal, stageIdx: stages.length - 1, completedAt: Date.now() });
+          const wallets = cur
+            ? s.wallets.map(w => w.meterNumber === op.meterNumber ? { ...w, balance: newBal, updatedAt: Date.now(), updatedBy: "ZVend Gateway" } : w)
+            : [...s.wallets, { meterNumber: op.meterNumber, facilityId: op.facilityId, balance: newBal, updatedAt: Date.now(), updatedBy: "ZVend Gateway" }];
+          return {
+            ...s, wallets,
+            operations: s.operations.map(o => o.id === opId ? completed : o), apiLogs: [log, ...s.apiLogs],
+            audit: [
+              ...mkAudit(s, "wallet_balance_change", `Meter ${op.meterNumber} wallet ${op.action} ${fmtNaira(op.amount!)} → ${fmtNaira(newBal)} (ZVend ${zv.ref}).`, op.txn),
+              ...mkAudit(s, "zvend_success", `Wallet ${op.txn} — ZVend executed ${op.action} · auto-completed.`, op.txn),
+              ...s.audit,
+            ],
+            notifications: [mkNotif("SECRETARY", `Meter ${op.meterNumber} wallet is now ${fmtNaira(newBal)} — ZVend response received, record auto-completed (${zv.ref}).`, "zvend", completed), ...s.notifications],
+          };
+        }
 
         /* ---- Meter Control: synchronous ZVend execution -------------------
            success → auto-complete + flip the power registry;
@@ -875,6 +923,61 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return created;
   };
 
+  /* ---- Wallet Mgt (ZVend wallet registry + FUND/DEDUCT) ---- */
+  const syncWallet: StoreCtx["syncWallet"] = () => new Promise(resolve => {
+    const latency = Math.floor(260 + Math.random() * 380);
+    setTimeout(() => {
+      mutate(s => {
+        const actor = s.users.find(u => u.id === s.currentUserId)?.name ?? "Z Admin";
+        return {
+          ...s, walletSyncedAt: Date.now(),
+          apiLogs: [{ id: uid(), at: Date.now(), user: actor, method: "GET", endpoint: "/v1/wallet/", status: "success", code: "00", durationMs: latency }, ...s.apiLogs],
+          audit: [...mkAudit(s, "wallet_sync", `ZVend wallet registry pulled · ${s.wallets.length} balances (${latency} ms).`), ...s.audit],
+        };
+      });
+      resolve();
+    }, latency);
+  });
+
+  const createWallet: StoreCtx["createWallet"] = d => {
+    const u = stateRef.current.users.find(x => x.id === stateRef.current.currentUserId)!;
+    /* Initiation is Secretary-only. */
+    if (u.role !== "SECRETARY" && u.role !== "SUPER_ADMIN") {
+      toast("Only the Secretary can initiate wallet transactions.", "danger");
+      mutate(st => ({ ...st, audit: [...mkAudit(st, "wallet_start_denied", `${u.name} attempted a wallet ${d.action} — not the Secretary.`, undefined), ...st.audit] }));
+      return null;
+    }
+    if (!Number.isFinite(d.amount) || d.amount <= 0) { toast("Enter a valid amount greater than zero.", "danger"); return null; }
+    if (!Number.isInteger(d.amount)) { toast("Amounts must be whole naira — no kobo.", "danger"); return null; }
+    if (d.amount > 500000) { toast("Amount exceeds the ₦500,000 single-transaction ceiling.", "danger"); return null; }
+    if (!d.comment.trim()) { toast("A reason is required for every wallet transaction.", "danger"); return null; }
+    if (!online) { toast("Offline — wallet transactions need the live ZVend link.", "danger"); return null; }
+    const s0 = stateRef.current;
+    if (s0.operations.some(o => o.type === "wallet" && o.meterNumber === d.meterNumber && !TERMINAL.includes(o.status) && o.status !== "REJECTED")) {
+      toast("A wallet transaction for this meter is already in flight.", "danger");
+      return null;
+    }
+    const rec = s0.wallets.find(w => w.meterNumber === d.meterNumber);
+    if (!rec) { toast("No wallet balance on record — refresh the registry from ZVend.", "danger"); return null; }
+    if (d.action === "DEDUCT" && d.amount > rec.balance) {
+      toast(`Insufficient balance — wallet holds ${fmtNaira(rec.balance)}; cannot deduct ${fmtNaira(d.amount)}.`, "danger");
+      return null;
+    }
+    let created: Op | null = null;
+    mutate(s => {
+      const [ns, op] = begin(s, {
+        type: "wallet", status: "PENDING", stageIdx: 1, meterNumber: d.meterNumber, facilityId: d.facilityId,
+        action: d.action, amount: d.amount, note: d.comment,
+        initiatorId: u.id, initiatorName: u.name, initiatorRole: u.role,
+        comments: [{ id: uid(), userId: u.id, userName: u.name, role: u.role, text: `${d.action} ${fmtNaira(d.amount)} requested — ${d.comment}`, at: Date.now(), decision: "submit" }],
+      });
+      created = op;
+      return { ...ns, notifications: [mkNotif("GENERAL_MANAGER", `Wallet ${d.action} ${fmtNaira(d.amount)} awaiting your approval · ${op.txn}`, "approval", op), ...ns.notifications] };
+    });
+    toast(`${d.action} request submitted to General Manager — ${fmtNaira(d.amount)}.`, "ok");
+    return created;
+  };
+
   /* ---- ZVend integration tester (console) — writes real api/audit logs ---- */
   const testZvend: StoreCtx["testZvend"] = (endpoint, method, payload, fail) => new Promise(resolve => {
     const latency = Math.floor(240 + Math.random() * 420);
@@ -896,6 +999,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : endpoint.includes("locate") ? { response_code: "00", reference: `LOC-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", updated: true }
         : endpoint.includes("power-status") ? { response_code: "00", count: stateRef.current.powerStates.length, ["meters"]: stateRef.current.powerStates.slice(0, 5).map(p => ({ meter_number: p.meterNumber, power: p.power, facility: stateRef.current.facilities.find(f => f.id === p.facilityId)?.code ?? null })) }
         : endpoint.includes("control") ? { response_code: "00", reference: `PWR-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", command: "0", executed: true, new_state: "0" }
+        : endpoint.includes("walletMgt") ? { response_code: "00", reference: `WLT-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", executed: true, new_balance: Math.floor(2000 + Math.random() * 40000) }
+        : endpoint.includes("wallet") ? { response_code: "00", count: stateRef.current.wallets.length, ["meters"]: stateRef.current.wallets.slice(0, 5).map(w => ({ meter: w.meterNumber, facility: stateRef.current.facilities.find(f => f.id === w.facilityId)?.code ?? null, walletBalance: w.balance })) }
         : { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, data: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, amount: Math.floor(2000 + Math.random() * 18000), at: new Date(Date.now() - i * 86400000 * 6).toISOString().slice(0, 10) })) };
       resolve({ ok: body.response_code === "00", code: String(body.response_code), durationMs: latency, body });
     }, latency);
@@ -909,7 +1014,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode, fetchZvendCatalog, syncLocates, updateLocate,
     saveScan, saveGps, addPhoto, saveCustomer, saveVideo, startField, markRead, markAllRead,
     auditCode, saveSettings, saveZvend, togglePerm, addUser, setUserActive, setDelegation, syncFacilities, pushAudit, testZvend,
-    syncPower, createControl,
+    syncPower, createControl, syncWallet, createWallet,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
