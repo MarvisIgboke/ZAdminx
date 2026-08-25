@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 /* ================= Types ================= */
 export type Role = "SUPER_ADMIN" | "SECRETARY" | "TECHNICAL_MAN" | "ENERGY_MANAGER" | "GENERAL_MANAGER" | "MD" | "IT_MANAGER";
-export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear";
+export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear" | "control";
 export type OpStatus = "PENDING" | "IN_PROGRESS" | "WAITING_ZVEND" | "ZVEND_SUCCESS" | "ZVEND_FAILED" | "ASSIGNED" | "SCHEDULED" | "COMPLETED" | "REJECTED" | "RETURNED" | "CANCELLED";
 export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" | "confirm" | "resubmit";
 
@@ -13,6 +13,8 @@ export interface Customer { id: string; name: string; phone: string; email: stri
 export interface Meter { id: string; number: string; facilityId: string; customerId?: string; status: string; installedAt?: number; manufacturer?: string; tariff?: string; }
 /* ZVend `locate` table row — meter GPS registry pulled via GET /v1/locate. */
 export interface LocateRec { id: string; meterNumber: string; facilityId: string; lat: number; lng: number; accuracy: number; updatedAt: number; updatedBy: string; source: "zvend" | "field"; }
+/* ZVend meter power state — ON/OFF registry pulled via GET /v1/meters/power-status. */
+export interface PowerState { meterNumber: string; facilityId: string; power: "ON" | "OFF"; updatedAt: number; updatedBy: string; }
 export interface Comment { id: string; userId: string; userName: string; role: Role; text: string; at: number; decision?: string; }
 export interface ScanRec { value: string; matched: boolean; at: number; }
 export interface GpsRec { lat: number; lng: number; accuracy: number; at: number; accepted: boolean; }
@@ -33,6 +35,7 @@ export interface Op {
   comments: Comment[];
   note?: string; scan?: ScanRec; gps?: GpsRec; photos: PhotoRec[]; customer?: CustomerInfo;
   instruction?: string; durationSec?: number; scheduledFor?: number; video?: VideoRec; observations?: string;
+  command?: "ON" | "OFF"; powerResult?: "ON" | "OFF";
   zvend?: ZvendRec; assignedToId?: string; availableAt?: number; completedAt?: number;
   retryCount: number; pendingSync?: boolean;
 }
@@ -45,6 +48,7 @@ export interface AppState {
   facilities: Facility[]; customers: Customer[]; meters: Meter[];
   operations: Op[]; notifications: Notif[]; audit: AuditEntry[]; apiLogs: ApiLog[];
   locates: LocateRec[]; locateSyncedAt: number;
+  powerStates: PowerState[]; powerSyncedAt: number;
   delegation: Delegation | null; settings: Settings;
 }
 
@@ -53,13 +57,14 @@ export const ROLE_LABEL: Record<Role, string> = {
   SUPER_ADMIN: "Super Admin", SECRETARY: "Secretary", TECHNICAL_MAN: "Technical Man",
   ENERGY_MANAGER: "Energy Manager", GENERAL_MANAGER: "General Manager", MD: "Managing Director", IT_MANAGER: "IT Manager",
 };
-export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear"];
+export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear", "control"];
 export const OPS: Record<OpType, { label: string; short: string; path: string; icon: string; prefix: string; blurb: string }> = {
   installation: { label: "Meter Installation", short: "Installation", path: "meter-installation", icon: "wrench", prefix: "INS", blurb: "New meter registration through EM → GM → MD → ZVend → field install." },
-  activation: { label: "Meter Activation", short: "Activation", path: "meter-activation", icon: "power", prefix: "ACT", blurb: "Technical-Man-initiated energization with customer capture." },
+  activation: { label: "Meter Activation", short: "Activation", path: "meter-activation", icon: "bolt", prefix: "ACT", blurb: "Technical-Man-initiated energization with customer capture." },
   inspection: { label: "Meter Inspection", short: "Inspection", path: "meter-inspection", icon: "clipboard", prefix: "INSP", blurb: "GM-scheduled video inspection. No ZVend call." },
   tamper: { label: "Tamper Code", short: "Tamper", path: "tamper-code", icon: "shield", prefix: "TMP", blurb: "20-digit tamper code issued by ZVend after MD approval." },
   clear: { label: "Clear Code", short: "Clear", path: "clear-code", icon: "key", prefix: "CLR", blurb: "20-digit clear code issued by ZVend after MD approval." },
+  control: { label: "Meter Control", short: "Control", path: "meter-control", icon: "power", prefix: "CTL", blurb: "Secretary-initiated ON/OFF power commands executed by ZVend after MD approval." },
 };
 
 type StageRole = Role | "ZVEND" | "INITIATOR";
@@ -113,6 +118,15 @@ export const STAGES: Record<OpType, StageDef[]> = {
     ap("DELIVERY", "Code Delivered", "INITIATOR"),
     ap("COMPLETED", "Completed", "INITIATOR"),
   ],
+  control: [
+    ap("INITIATOR", "Secretary Power Request", "SECRETARY"),
+    ap("ENERGY_MANAGER", "Energy Manager Approval", "ENERGY_MANAGER"),
+    ap("GENERAL_MANAGER", "General Manager Approval", "GENERAL_MANAGER"),
+    ap("MD", "MD Final Approval", "MD"),
+    ap("ZVEND", "ZVend Power Command", "ZVEND"),
+    ap("DELIVERY", "Secretary Confirmation", "SECRETARY"),
+    ap("COMPLETED", "Completed", "SECRETARY"),
+  ],
 };
 export const STATUS_META: Record<OpStatus, { label: string; tone: "gray" | "amber" | "green" | "red" | "blue" | "teal" | "ink" }> = {
   PENDING: { label: "Pending", tone: "amber" }, IN_PROGRESS: { label: "In Progress", tone: "blue" },
@@ -129,6 +143,7 @@ export const PERMS = [
   "inspection.view", "inspection.create", "inspection.approve", "inspection.execute", "inspection.history",
   "tamper.view", "tamper.create", "tamper.approve", "tamper.execute", "tamper.history",
   "clear.view", "clear.create", "clear.approve", "clear.execute", "clear.history",
+  "control.view", "control.create", "control.approve", "control.history",
   "approvals.view", "facilities.view", "facilities.sync", "customers.view", "meters.view",
   "reports.view", "notifications.view", "history.view", "map.view", "map.update",
   "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation", "admin.database",
@@ -139,12 +154,12 @@ const approveAll = viewAll.map(p => p.replace(".view", ".approve"));
 const dataView = ["facilities.view", "customers.view", "meters.view", "notifications.view"];
 export const DEFAULT_MATRIX: Record<Role, string[]> = {
   SUPER_ADMIN: [...PERMS],
-  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view"],
-  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update"],
-  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view"],
-  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view"],
-  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view"],
-  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view"],
+  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view", "control.view", "control.create", "control.approve", "control.history"],
+  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update", "control.view", "control.history"],
+  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
+  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
+  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
+  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view", "control.view", "control.history"],
 };
 
 /* ================= Helpers ================= */
@@ -313,10 +328,19 @@ function buildSeed(): AppState {
     };
   });
   apiLogs.unshift({ id: uid(), at: now - 5 * H, user: "Tunde Alabi", endpoint: "/v1/locate", method: "GET", status: "success", code: "00", durationMs: 318 });
+  /* ZVend power-status registry — faulty meters read OFF, a couple of
+     active meters are disconnected, the rest are energized. */
+  const powerStates: PowerState[] = meters.filter(m => ["ACTIVE", "INSTALLED", "FAULTY"].includes(m.status)).map((m, i) => ({
+    meterNumber: m.number, facilityId: m.facilityId,
+    power: m.status === "FAULTY" ? "OFF" : (i % 4 === 2 ? "OFF" : "ON"),
+    updatedAt: now - Math.floor(Math.random() * 10 + 1) * D, updatedBy: "ZVend Sync",
+  }));
+  apiLogs.unshift({ id: uid(), at: now - 4 * H, user: "Tunde Alabi", endpoint: "/v1/meters/power-status", method: "GET", status: "success", code: "00", durationMs: 264 });
   return {
     v: 4, currentUserId: null, users, permissionMatrix: JSON.parse(JSON.stringify(DEFAULT_MATRIX)),
     facilities, customers, meters, operations, notifications, audit, apiLogs,
     locates, locateSyncedAt: now - 5 * H,
+    powerStates, powerSyncedAt: now - 4 * H,
     delegation: { mdId: "u-md", gmId: "u-gm", from: now - 2 * D, to: now + 5 * D, reason: "MD travelling — approval authority delegated.", active: true },
     settings: { maxGpsAccuracyM: 50, inspectionDurations: [60, 120, 180, 300], defaultDurationSec: 120, zvend: { baseUrl: "https://api.zvend.zarox.com", token: "zv_live_••••••••", timeout: 20, retries: 3 } },
   };
@@ -331,15 +355,24 @@ function load(): AppState {
       const s = JSON.parse(raw) as AppState;
       if (s.v === 4) {
         s.permissionMatrix = { ...s.permissionMatrix, SUPER_ADMIN: [...PERMS] };
-        // Backfill Meter Map for saves created before it existed.
+        // Backfill Meter Map / Meter Control for saves created before them.
         if (!s.locates) {
           const fresh = buildSeed();
           s.locates = fresh.locates;
           s.locateSyncedAt = fresh.locateSyncedAt;
         }
+        if (!s.powerStates) {
+          const fresh = buildSeed();
+          s.powerStates = fresh.powerStates;
+          s.powerSyncedAt = fresh.powerSyncedAt;
+        }
         (Object.keys(s.permissionMatrix) as Role[]).forEach(r => {
           if (!s.permissionMatrix[r].includes("map.view")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.view"];
           if ((r === "TECHNICAL_MAN" || r === "SUPER_ADMIN") && !s.permissionMatrix[r].includes("map.update")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.update"];
+          const ctlView = ["control.view", "control.history"];
+          if (r === "SECRETARY") ctlView.push("control.create", "control.approve");
+          if (r === "ENERGY_MANAGER" || r === "GENERAL_MANAGER" || r === "MD") ctlView.push("control.approve");
+          ctlView.forEach(p => { if (!s.permissionMatrix[r].includes(p)) s.permissionMatrix[r] = [...s.permissionMatrix[r], p]; });
         });
         return s;
       }
@@ -390,6 +423,8 @@ interface StoreCtx {
   fetchZvendCatalog: (kind: "manufacturers" | "tariffs") => Promise<{ items: ZvendCatalogItem[]; latencyMs: number }>;
   syncLocates: () => Promise<void>;
   updateLocate: (meterNumber: string, g: GpsRec) => Promise<{ ok: boolean; latencyMs: number; reference: string }>;
+  syncPower: () => Promise<void>;
+  createControl: (d: { meterNumber: string; facilityId: string; command: "ON" | "OFF"; comment: string }) => Op | null;
   addUser: (d: { name: string; email: string; role: Role }) => void; setUserActive: (id: string, a: boolean) => void;
   setDelegation: (d: Delegation | null) => void; syncFacilities: () => void; pushAudit: (action: string, detail: string) => void;
 }
@@ -444,18 +479,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const op = s.operations.find(o => o.id === opId);
         if (!op || op.status !== "WAITING_ZVEND") return s;
         const ok = true;
-        const zv: ZvendRec = { status: "success", ref: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, responseCode: "00", at: Date.now(), latencyMs: Math.floor(280 + Math.random() * 320) };
+        const zv: ZvendRec = { status: "success", ref: op.type === "control" ? `PWR-${Math.floor(10000 + Math.random() * 89999)}` : `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, responseCode: "00", at: Date.now(), latencyMs: Math.floor(280 + Math.random() * 320) };
         if (op.type === "installation") { zv.tamper = gen20(); zv.clear = gen20(); }
         if (op.type === "tamper") zv.tamper = gen20();
         if (op.type === "clear") zv.clear = gen20();
         const stages = STAGES[op.type]; const nextIdx = op.stageIdx + 1;
-        const updated = touch(op, { status: ok ? "ZVEND_SUCCESS" : "ZVEND_FAILED", zvend: zv, stageIdx: nextIdx });
+        const updated = touch(op, { status: ok ? "ZVEND_SUCCESS" : "ZVEND_FAILED", zvend: zv, stageIdx: nextIdx, ...(op.type === "control" ? { powerResult: op.command } : {}) });
         const log: ApiLog = { id: uid(), at: Date.now(), user: "ZVend Gateway", method: "POST", txn: op.txn, status: "success", code: "00", durationMs: zv.latencyMs,
-          endpoint: op.type === "installation" ? "/v1/meters/install" : op.type === "activation" ? "/v1/meters/activate" : op.type === "tamper" ? "/v1/meters/tamper-code" : "/v1/meters/clear-code" };
+          endpoint: op.type === "installation" ? "/v1/meters/install" : op.type === "activation" ? "/v1/meters/activate" : op.type === "tamper" ? "/v1/meters/tamper-code" : op.type === "control" ? "/v1/meters/control" : "/v1/meters/clear-code" };
+        /* ZVend executed the power command — the registry state flips now. */
+        const powerStates = op.type === "control" && op.command
+          ? s.powerStates.map(p => p.meterNumber === op.meterNumber ? { ...p, power: op.command!, updatedAt: Date.now(), updatedBy: "ZVend Gateway" } : p)
+          : s.powerStates;
         return {
-          ...s, operations: s.operations.map(o => o.id === opId ? updated : o), apiLogs: [log, ...s.apiLogs],
-          audit: [...mkAudit(s, "zvend_success", `${OPS[op.type].label} ${op.txn} — ZVend completed (ref ${zv.ref}).`, op.txn), ...s.audit],
-          notifications: [mkNotif("SECRETARY", `${OPS[op.type].label} ${op.txn} — ZVend succeeded. Result ready.`, "zvend", updated), ...s.notifications],
+          ...s, powerStates,
+          operations: s.operations.map(o => o.id === opId ? updated : o), apiLogs: [log, ...s.apiLogs],
+          audit: [...mkAudit(s, "zvend_success", op.type === "control"
+            ? `Meter Control ${op.txn} — ZVend executed TURN ${op.command} (ref ${zv.ref}). Meter is now ${op.command}.`
+            : `${OPS[op.type].label} ${op.txn} — ZVend completed (ref ${zv.ref}).`, op.txn), ...s.audit],
+          notifications: [mkNotif("SECRETARY", op.type === "control"
+            ? `Meter ${op.meterNumber} is now ${op.command} — confirm the ZVend response (${zv.ref}).`
+            : `${OPS[op.type].label} ${op.txn} — ZVend succeeded. Result ready.`, "zvend", updated), ...s.notifications],
         };
       });
     }, 1600);
@@ -707,6 +751,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, latency);
   });
 
+  /* ---- Meter Control (ZVend power commands) ---- */
+  const syncPower: StoreCtx["syncPower"] = () => new Promise(resolve => {
+    const latency = Math.floor(260 + Math.random() * 380);
+    setTimeout(() => {
+      mutate(s => {
+        const actor = s.users.find(u => u.id === s.currentUserId)?.name ?? "Z Admin";
+        return {
+          ...s, powerSyncedAt: Date.now(),
+          apiLogs: [{ id: uid(), at: Date.now(), user: actor, method: "GET", endpoint: "/v1/meters/power-status", status: "success", code: "00", durationMs: latency }, ...s.apiLogs],
+          audit: [...mkAudit(s, "power_sync", `ZVend power-status pulled · ${s.powerStates.length} meters (${latency} ms).`), ...s.audit],
+        };
+      });
+      resolve();
+    }, latency);
+  });
+
+  const createControl: StoreCtx["createControl"] = d => {
+    const u = stateRef.current.users.find(x => x.id === stateRef.current.currentUserId)!;
+    /* Initiation is Secretary-only. */
+    if (u.role !== "SECRETARY" && u.role !== "SUPER_ADMIN") {
+      toast("Only the Secretary can initiate a Meter Control request.", "danger");
+      mutate(st => ({ ...st, audit: [...mkAudit(st, "control_start_denied", `${u.name} attempted a power command — not the Secretary.`, undefined), ...st.audit] }));
+      return null;
+    }
+    if (!d.comment.trim()) { toast("A reason is required for every power command.", "danger"); return null; }
+    /* Power commands execute against live infrastructure — never queued offline. */
+    if (!online) { toast("Offline — power commands need the live ZVend link.", "danger"); return null; }
+    const s0 = stateRef.current;
+    if (s0.operations.some(o => o.type === "control" && o.meterNumber === d.meterNumber && !TERMINAL.includes(o.status) && o.status !== "REJECTED")) {
+      toast("A power request for this meter is already in flight.", "danger");
+      return null;
+    }
+    const cur = s0.powerStates.find(p => p.meterNumber === d.meterNumber);
+    if (cur && cur.power === d.command) { toast(`Meter is already ${d.command} — nothing to request.`, "danger"); return null; }
+    let created: Op | null = null;
+    mutate(s => {
+      const [ns, op] = begin(s, {
+        type: "control", status: "PENDING", stageIdx: 1, meterNumber: d.meterNumber, facilityId: d.facilityId,
+        command: d.command, note: d.comment,
+        initiatorId: u.id, initiatorName: u.name, initiatorRole: u.role,
+        comments: [{ id: uid(), userId: u.id, userName: u.name, role: u.role, text: `${d.command === "ON" ? "Turn ON" : "Turn OFF"} requested — ${d.comment}`, at: Date.now(), decision: "submit" }],
+      });
+      created = op;
+      return { ...ns, notifications: [mkNotif("ENERGY_MANAGER", `Meter Control (${d.command}) awaiting your approval · ${op.txn}`, "approval", op), ...ns.notifications] };
+    });
+    toast(`Power request submitted to Energy Manager — TURN ${d.command}.`, "ok");
+    return created;
+  };
+
   /* ---- ZVend integration tester (console) — writes real api/audit logs ---- */
   const testZvend: StoreCtx["testZvend"] = (endpoint, method, payload, fail) => new Promise(resolve => {
     const latency = Math.floor(240 + Math.random() * 420);
@@ -726,6 +819,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : endpoint.includes("manufacturers") ? { response_code: "00", data: ZVEND_MANUFACTURERS.map(m => ({ code: m.code, name: m.label })) }
         : endpoint.includes("tarriffs") ? { response_code: "00", data: ZVEND_TARIFFS.map(t => ({ code: t.code, name: t.label })) }
         : endpoint.includes("locate") ? { response_code: "00", reference: `LOC-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", updated: true }
+        : endpoint.includes("power-status") ? { response_code: "00", count: stateRef.current.powerStates.length,  stateRef.current.powerStates.slice(0, 5).map(p => ({ meter_number: p.meterNumber, power: p.power })) }
+        : endpoint.includes("control") ? { response_code: "00", reference: `PWR-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", command: "OFF", executed: true, new_state: "OFF" }
         : { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, data: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, amount: Math.floor(2000 + Math.random() * 18000), at: new Date(Date.now() - i * 86400000 * 6).toISOString().slice(0, 10) })) };
       resolve({ ok: body.response_code === "00", code: String(body.response_code), durationMs: latency, body });
     }, latency);
