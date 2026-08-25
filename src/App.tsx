@@ -53,6 +53,7 @@ function Router() {
     case OPS.inspection.path: page = opDetail("inspection"); break;
     case OPS.tamper.path: page = opDetail("tamper"); break;
     case OPS.clear.path: page = opDetail("clear"); break;
+    case OPS.control.path: page = can("control.view") ? (second ? <OperationDetailPage type="control" id={second} /> : <MeterControlPage />) : <AccessDenied perm="control.view" />; break;
     case "meter-map": page = can("map.view") ? <MeterMapPage /> : <AccessDenied perm="map.view" />; break;
     case "approvals": page = can("approvals.view") ? <ApprovalsPage /> : <AccessDenied perm="approvals.view" />; break;
     case "notifications": page = can("notifications.view") ? <NotificationsPage /> : <AccessDenied perm="notifications.view" />; break;

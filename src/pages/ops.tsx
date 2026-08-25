@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CustomerInfo, GpsRec, Op, OpType, PhotoRec, ZvendCatalogItem } from "../lib/core";
-import { age, fmtDate, fmtDT, OPS, STAGES, STATUS_META, TERMINAL } from "../lib/core";
+import { age, fmtDate, fmtDT, OPS, powerLabel, STAGES, STATUS_META, TERMINAL } from "../lib/core";
 import { useStore } from "../lib/core";
 import { BarcodeScanner, PhotoCapture } from "../components/workflow";
 import { Btn, Card, EmptyState, Field, Icon, Pagination, SectionHead, Select, StatusPill, TextInput, Textarea, TonePill, useRoute } from "../components/ui";
@@ -37,6 +37,12 @@ const chipDefs: Record<OpType, { label: string; match: (s: string) => boolean }[
     { label: "ZVend", match: s => ["WAITING_ZVEND", "ZVEND_SUCCESS", "ZVEND_FAILED"].includes(s) },
     { label: "Completed", match: s => s === "COMPLETED" },
   ],
+  control: [
+    { label: "Pending", match: s => s === "PENDING" },
+    { label: "ZVend", match: s => ["WAITING_ZVEND", "ZVEND_FAILED"].includes(s) },
+    { label: "Completed", match: s => s === "COMPLETED" },
+    { label: "Rejected / Returned", match: s => ["REJECTED", "RETURNED"].includes(s) },
+  ],
 };
 
 export function OperationListPage({ type }: { type: OpType }) {
@@ -59,7 +65,7 @@ export function OperationListPage({ type }: { type: OpType }) {
 
   return (
     <div className="mx-auto max-w-[1240px]">
-      <SectionHead title={meta.label} sub={`${ops.length} records · ${meta.blurb}`} right={canNew ? <Btn variant="volt" icon="plus" onClick={() => nav(newRoute)}>{newLabel}</Btn> : undefined} />
+      <SectionHead title={meta.label} sub={`${ops.length} records · ${meta.blurb}`} right={canNew && type !== "control" ? <Btn variant="volt" icon="plus" onClick={() => nav(newRoute)}>{newLabel}</Btn> : undefined} />
       <div className="mb-4 flex flex-wrap gap-2 anim-rise">
         <button onClick={() => { setStatus("ALL"); setPage(1); }} className={`rounded-lg border px-3 py-1.5 text-[11.5px] font-extrabold transition-colors ${status === "ALL" ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink2 hover:border-ink/40"}`}>Total <span className="ml-1 font-mono tnum">{ops.length}</span></button>
         {chipDefs[type].map(c => (
@@ -557,6 +563,42 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
             {op.scheduledFor && <p className="mt-2 flex items-center gap-1.5 text-[11.5px] font-bold text-mute"><Icon name="calendar" size={13} /> Scheduled for {fmtDate(op.scheduledFor)} · {Math.round((op.durationSec ?? 0) / 60)}-minute video rule{op.retryCount > 0 ? ` · retry #${op.retryCount}` : ""}</p>}
           </Card>
 
+          {type === "control" && (
+            <Card className="anim-rise p-4">
+              <p className="mb-3 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">POWER COMMAND</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 ${op.command === "1" ? "border-[#c2ddcd] bg-oksoft" : "border-line2 bg-paper"}`}>
+                  <Icon name="power" size={18} className={op.command === "1" ? "text-ok" : "text-mute"} />
+                  <span>
+                    <span className="block font-display text-[16px] font-bold leading-tight">TURN {op.command ? powerLabel(op.command) : "—"}</span>
+                    <span className="font-mono text-[9.5px] font-bold text-mute">command "{op.command ?? "?"}" → POST /v1/meters/control</span>
+                  </span>
+                </span>
+                <Icon name="arrowR" size={16} className="text-mute" />
+                {op.powerResult ? (
+                  <span className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 ${op.powerResult === "1" ? "border-[#c2ddcd] bg-oksoft" : "border-[#ecd9b8] bg-warnsoft/60"}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${op.powerResult === "1" ? "bg-ok okdot" : "bg-warn"}`} />
+                    <span>
+                      <span className="block font-display text-[16px] font-bold leading-tight">METER IS {powerLabel(op.powerResult)}</span>
+                      <span className="font-mono text-[9.5px] font-bold text-mute">executed by ZVend · ref {op.zvend?.ref}</span>
+                    </span>
+                  </span>
+                ) : op.status === "ZVEND_FAILED" ? (
+                  <span className="flex items-center gap-2 rounded-xl border-2 border-[#eac5be] bg-dangersoft px-4 py-2.5">
+                    <Icon name="alert" size={16} className="text-danger" />
+                    <span>
+                      <span className="block font-display text-[15px] font-bold leading-tight text-danger">EXECUTION FAILED · {op.zvend?.responseCode}</span>
+                      <span className="font-mono text-[9.5px] font-bold text-mute">bounced back to Secretary · state unchanged</span>
+                    </span>
+                  </span>
+                ) : (
+                  <span className="rounded-xl border-2 border-dashed border-line2 px-4 py-2.5 font-mono text-[11px] font-bold text-mute">awaiting approval chain…</span>
+                )}
+              </div>
+              {(op.status === "ZVEND_FAILED" || op.status === "RETURNED") && <ControlResubmit op={op} failed={op.status === "ZVEND_FAILED"} />}
+            </Card>
+          )}
+
           {op.customer && (
             <Card className="anim-rise p-4">
               <p className="mb-2 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">CUSTOMER</p>
@@ -668,6 +710,34 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* Secretary resubmission for bounced (ZVend failed) or returned power requests. */
+function ControlResubmit({ op, failed }: { op: Op; failed: boolean }) {
+  const { decide, user } = useStore();
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!user || user.role !== op.initiatorRole) return null;
+  const run = () => {
+    if (note.trim().length < 5) { setErr("A resubmission note (min 5 characters) is required."); return; }
+    setErr(""); setBusy(true);
+    setTimeout(() => {
+      const e = decide(op.id, "resubmit", `${failed ? "Resubmitted after ZVend failure" : "Resubmitted after return"} — ${note.trim()}`);
+      if (e) setErr(e);
+      setBusy(false);
+    }, 350);
+  };
+  return (
+    <div className="anim-rise mt-4 rounded-xl border-2 border-volt/60 bg-voltsoft/60 p-3.5">
+      <p className="flex items-center gap-2 font-display text-[13px] font-bold text-volt2">
+        <Icon name="sync" size={14} /> {failed ? "Bounced back to you — resubmit to re-run the approval chain" : "Returned to you — amend and resubmit"}
+      </p>
+      <Textarea value={note} onChange={e => setNote(e.target.value)} className="mt-2.5 bg-card" placeholder="What changed / why retry? Becomes the append-only workflow comment…" />
+      {err && <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
+      <Btn variant="volt" icon="arrowR" className="mt-2.5" loading={busy} onClick={run}>RESUBMIT TO ENERGY MANAGER</Btn>
     </div>
   );
 }
