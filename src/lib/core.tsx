@@ -554,7 +554,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addPhoto: StoreCtx["addPhoto"] = (opId, p) => patchOp(opId, o => ({ ...o, photos: [...o.photos, p] }), ["photo_capture", `Photo '${p.label}' captured.`]);
   const saveCustomer: StoreCtx["saveCustomer"] = (opId, c) => patchOp(opId, o => ({ ...o, customer: c }));
   const saveVideo: StoreCtx["saveVideo"] = (opId, v, obs) => patchOp(opId, o => ({ ...o, video: v, observations: obs }), ["video_capture", `Inspection video (${v.durationSec}s) captured.`]);
-  const startField: StoreCtx["startField"] = opId => patchOp(opId, o => ({ ...o, status: "IN_PROGRESS", assignedToId: stateRef.current.currentUserId ?? undefined, retryCount: o.status === "REJECTED" ? o.retryCount + 1 : o.retryCount }), ["field_start", "Field operation started."]);
+  /* Field start is a Technical-Man-only action — the GM schedules, the
+     Technical Man executes. Blocked attempts are refused and audited. */
+  const startField: StoreCtx["startField"] = opId => {
+    const s = stateRef.current;
+    const u = s.users.find(x => x.id === s.currentUserId);
+    const op = s.operations.find(o => o.id === opId);
+    if (!u || (u.role !== "TECHNICAL_MAN" && u.role !== "SUPER_ADMIN")) {
+      toast("Only the Technical Man can start a field operation.", "danger");
+      mutate(st => ({ ...st, audit: [...mkAudit(st, "field_start_denied", `${u?.name ?? "Unknown"} attempted to start ${op?.txn ?? "a field operation"} — not the Technical Man.`, op?.txn), ...st.audit] }));
+      return;
+    }
+    patchOp(opId, o => ({ ...o, status: "IN_PROGRESS", assignedToId: u.id, retryCount: o.status === "REJECTED" ? o.retryCount + 1 : o.retryCount }), ["field_start", `Field operation started by ${u.name}.`]);
+  };
   const auditCode: StoreCtx["auditCode"] = (opId, action) => mutate(s => ({ ...s, audit: [...mkAudit(s, action, `${action.replace(/_/g, " ")} · ${s.operations.find(o => o.id === opId)?.txn ?? ""}`), ...s.audit] }));
 
   /* ---- misc ---- */

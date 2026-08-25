@@ -413,7 +413,7 @@ export function ScheduleInspectionPage() {
 
 /* ================= Detail ================= */
 export function OperationDetailPage({ type, id }: { type: OpType; id: string }) {
-  const { state, decide, startField, saveCustomer } = useStore();
+  const { state, user, decide, startField, saveCustomer } = useStore();
   const { nav } = useRoute();
   const [tab, setTab] = useState("workflow");
   const op = state.operations.find(o => o.id === id && o.type === type);
@@ -422,6 +422,7 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
   const meta = OPS[type];
   const stage = STAGES[type][Math.min(op.stageIdx, STAGES[type].length - 1)];
   const isTechOwner = stage.key === "EXECUTION" && (op.status === "SCHEDULED" || op.status === "REJECTED" || op.status === "IN_PROGRESS" || op.status === "ASSIGNED");
+  const isFieldUser = user?.role === "TECHNICAL_MAN" || user?.role === "SUPER_ADMIN";
   const needsField = type === "installation" && op.status === "ASSIGNED";
   const auditRows = state.audit.filter(a => a.txn === op.txn);
   const apiRows = state.apiLogs.filter(l => l.txn === op.txn);
@@ -484,11 +485,16 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
             <Card className="anim-rise">
               <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[15px] font-bold">Field evidence</h2></div>
               <div className="space-y-4 p-4">
-                {isTechOwner && op.status !== "IN_PROGRESS" && (
+                {isTechOwner && op.status !== "IN_PROGRESS" && isFieldUser && (
                   <Btn variant="volt" icon="video" size="lg" className="w-full" onClick={() => startField(op.id)}>{type === "inspection" ? "START INSPECTION" : "START INSTALLATION"}</Btn>
                 )}
-                {needsField && <FieldExecution opId={op.id} />}
-                {type === "inspection" && op.status === "IN_PROGRESS" && isTechOwner && <InspectionExecution op={op} />}
+                {isTechOwner && op.status !== "IN_PROGRESS" && !isFieldUser && (
+                  <p className="flex items-center gap-2.5 rounded-lg border border-[#ecd9b8] bg-warnsoft/70 px-3 py-2.5 text-[11.5px] font-extrabold text-warn anim-fade">
+                    <Icon name="lock" size={14} /> AWAITING FIELD EXECUTION — only the Technical Man can start this {type === "inspection" ? "inspection" : "installation"}.
+                  </p>
+                )}
+                {needsField && isFieldUser && <FieldExecution opId={op.id} />}
+                {type === "inspection" && op.status === "IN_PROGRESS" && isTechOwner && isFieldUser && <InspectionExecution op={op} />}
                 {(op.scan || op.gps || op.photos.length > 0 || op.video) && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     {op.scan && <MiniEv ok={op.scan.matched} okLabel="METER VERIFIED" badLabel="METER MISMATCH" detail={`${op.scan.value} · ${fmtDT(op.scan.at)}`} />}
