@@ -11,6 +11,8 @@ export interface User { id: string; name: string; email: string; role: Role; act
 export interface Facility { id: string; code: string; name: string; area: string; lat: number; lng: number; status: string; syncedAt: number; }
 export interface Customer { id: string; name: string; phone: string; email: string; address: string; facilityId: string; }
 export interface Meter { id: string; number: string; facilityId: string; customerId?: string; status: string; installedAt?: number; manufacturer?: string; tariff?: string; }
+/* ZVend `locate` table row — meter GPS registry pulled via GET /v1/locate. */
+export interface LocateRec { id: string; meterNumber: string; facilityId: string; lat: number; lng: number; accuracy: number; updatedAt: number; updatedBy: string; source: "zvend" | "field"; }
 export interface Comment { id: string; userId: string; userName: string; role: Role; text: string; at: number; decision?: string; }
 export interface ScanRec { value: string; matched: boolean; at: number; }
 export interface GpsRec { lat: number; lng: number; accuracy: number; at: number; accepted: boolean; }
@@ -42,6 +44,7 @@ export interface AppState {
   users: User[]; permissionMatrix: Record<Role, string[]>;
   facilities: Facility[]; customers: Customer[]; meters: Meter[];
   operations: Op[]; notifications: Notif[]; audit: AuditEntry[]; apiLogs: ApiLog[];
+  locates: LocateRec[]; locateSyncedAt: number;
   delegation: Delegation | null; settings: Settings;
 }
 
@@ -127,7 +130,7 @@ export const PERMS = [
   "tamper.view", "tamper.create", "tamper.approve", "tamper.execute", "tamper.history",
   "clear.view", "clear.create", "clear.approve", "clear.execute", "clear.history",
   "approvals.view", "facilities.view", "facilities.sync", "customers.view", "meters.view",
-  "reports.view", "notifications.view", "history.view",
+  "reports.view", "notifications.view", "history.view", "map.view", "map.update",
   "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation", "admin.database",
 ] as const;
 const viewAll = ["installation.view", "activation.view", "inspection.view", "tamper.view", "clear.view"];
@@ -136,12 +139,12 @@ const approveAll = viewAll.map(p => p.replace(".view", ".approve"));
 const dataView = ["facilities.view", "customers.view", "meters.view", "notifications.view"];
 export const DEFAULT_MATRIX: Record<Role, string[]> = {
   SUPER_ADMIN: [...PERMS],
-  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync"],
-  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView],
-  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView],
-  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView],
-  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView],
-  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView],
+  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view"],
+  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update"],
+  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view"],
+  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view"],
+  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view"],
+  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view"],
 };
 
 /* ================= Helpers ================= */
@@ -297,9 +300,23 @@ function buildSeed(): AppState {
     { id: uid(), forRole: "TECHNICAL_MAN", kind: "field", text: "Inspection scheduled — field action required.", at: now - 20 * H, read: false, opId: "op7", txn: operations[6].txn },
     { id: uid(), forRole: "SECRETARY", kind: "zvend", text: "ZVend installation completed — codes ready for release.", at: now - 9 * D + 5 * H, read: true, opId: "op3", txn: operations[2].txn },
   ];
+  /* ZVend `locate` table — GPS registry of deployed meters. A couple of
+     registry meters are deliberately unlocated so the field flow has work. */
+  const locateSrc = meters.filter(m => ["ACTIVE", "INSTALLED", "FAULTY"].includes(m.status)).filter((_, i) => i !== 2 && i !== 5);
+  const locates: LocateRec[] = locateSrc.map((m, i) => {
+    const f = facilities.find(x => x.id === m.facilityId)!;
+    return {
+      id: `loc-${i}`, meterNumber: m.number, facilityId: m.facilityId,
+      lat: +(f.lat + (Math.random() - 0.5) * 0.004).toFixed(6), lng: +(f.lng + (Math.random() - 0.5) * 0.004).toFixed(6),
+      accuracy: Math.round(6 + Math.random() * 28), updatedAt: now - Math.floor(Math.random() * 18 + 1) * D,
+      updatedBy: "ZVend Sync", source: "zvend" as const,
+    };
+  });
+  apiLogs.unshift({ id: uid(), at: now - 5 * H, user: "Tunde Alabi", endpoint: "/v1/locate", method: "GET", status: "success", code: "00", durationMs: 318 });
   return {
     v: 4, currentUserId: null, users, permissionMatrix: JSON.parse(JSON.stringify(DEFAULT_MATRIX)),
     facilities, customers, meters, operations, notifications, audit, apiLogs,
+    locates, locateSyncedAt: now - 5 * H,
     delegation: { mdId: "u-md", gmId: "u-gm", from: now - 2 * D, to: now + 5 * D, reason: "MD travelling — approval authority delegated.", active: true },
     settings: { maxGpsAccuracyM: 50, inspectionDurations: [60, 120, 180, 300], defaultDurationSec: 120, zvend: { baseUrl: "https://api.zvend.zarox.com", token: "zv_live_••••••••", timeout: 20, retries: 3 } },
   };
@@ -314,6 +331,16 @@ function load(): AppState {
       const s = JSON.parse(raw) as AppState;
       if (s.v === 4) {
         s.permissionMatrix = { ...s.permissionMatrix, SUPER_ADMIN: [...PERMS] };
+        // Backfill Meter Map for saves created before it existed.
+        if (!s.locates) {
+          const fresh = buildSeed();
+          s.locates = fresh.locates;
+          s.locateSyncedAt = fresh.locateSyncedAt;
+        }
+        (Object.keys(s.permissionMatrix) as Role[]).forEach(r => {
+          if (!s.permissionMatrix[r].includes("map.view")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.view"];
+          if ((r === "TECHNICAL_MAN" || r === "SUPER_ADMIN") && !s.permissionMatrix[r].includes("map.update")) s.permissionMatrix[r] = [...s.permissionMatrix[r], "map.update"];
+        });
         return s;
       }
     }
@@ -361,6 +388,8 @@ interface StoreCtx {
   saveZvend: (p: Partial<Settings["zvend"]>) => void; togglePerm: (r: Role, p: string) => void;
   testZvend: (endpoint: string, method: string, payload: unknown, fail?: boolean) => Promise<{ ok: boolean; code: string; durationMs: number; body: Record<string, unknown> }>;
   fetchZvendCatalog: (kind: "manufacturers" | "tariffs") => Promise<{ items: ZvendCatalogItem[]; latencyMs: number }>;
+  syncLocates: () => Promise<void>;
+  updateLocate: (meterNumber: string, g: GpsRec) => Promise<{ ok: boolean; latencyMs: number; reference: string }>;
   addUser: (d: { name: string; email: string; role: Role }) => void; setUserActive: (id: string, a: boolean) => void;
   setDelegation: (d: Delegation | null) => void; syncFacilities: () => void; pushAudit: (action: string, detail: string) => void;
 }
@@ -642,6 +671,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, latencyMs);
   });
 
+  /* ---- ZVend locate table (Meter Map) ---- */
+  const syncLocates: StoreCtx["syncLocates"] = () => new Promise(resolve => {
+    const latency = Math.floor(320 + Math.random() * 480);
+    setTimeout(() => {
+      mutate(s => {
+        const actor = s.users.find(u => u.id === s.currentUserId)?.name ?? "Z Admin";
+        return {
+          ...s, locateSyncedAt: Date.now(),
+          apiLogs: [{ id: uid(), at: Date.now(), user: actor, method: "GET", endpoint: "/v1/locate", status: "success", code: "00", durationMs: latency }, ...s.apiLogs],
+          audit: [...mkAudit(s, "locate_sync", `ZVend locate table pulled · ${s.locates.length} records (${latency} ms).`), ...s.audit],
+        };
+      });
+      resolve();
+    }, latency);
+  });
+
+  const updateLocate: StoreCtx["updateLocate"] = (meterNumber, g) => new Promise(resolve => {
+    const latency = Math.floor(480 + Math.random() * 620);
+    setTimeout(() => {
+      const reference = `LOC-${Math.floor(10000 + Math.random() * 89999)}`;
+      mutate(s => {
+        const u = s.users.find(x => x.id === s.currentUserId);
+        const facId = s.meters.find(m => m.number === meterNumber)?.facilityId ?? "";
+        const rec: LocateRec = { id: uid(), meterNumber, facilityId: facId, lat: g.lat, lng: g.lng, accuracy: g.accuracy, updatedAt: Date.now(), updatedBy: u?.name ?? "Field", source: "field" };
+        return {
+          ...s,
+          locates: [...s.locates.filter(l => l.meterNumber !== meterNumber), rec],
+          apiLogs: [{ id: uid(), at: Date.now(), user: u?.name ?? "Field", method: "POST", endpoint: "/v1/locate", status: "success", code: "00", durationMs: latency }, ...s.apiLogs],
+          audit: [...mkAudit(s, "locate_updated", `Locate for meter ${meterNumber} → ${g.lat}, ${g.lng} (±${g.accuracy} m) posted to ZVend · ${reference}.`), ...s.audit],
+          notifications: [{ id: uid(), forRole: "IT_MANAGER", kind: "zvend", text: `Locate table updated for meter ${meterNumber} by ${u?.name ?? "Field"}.`, at: Date.now(), read: false }, ...s.notifications],
+        };
+      });
+      resolve({ ok: true, latencyMs: latency, reference });
+    }, latency);
+  });
+
   /* ---- ZVend integration tester (console) — writes real api/audit logs ---- */
   const testZvend: StoreCtx["testZvend"] = (endpoint, method, payload, fail) => new Promise(resolve => {
     const latency = Math.floor(240 + Math.random() * 420);
@@ -660,6 +725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : endpoint.includes("activate") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, token_balance: 0 }
         : endpoint.includes("manufacturers") ? { response_code: "00", data: ZVEND_MANUFACTURERS.map(m => ({ code: m.code, name: m.label })) }
         : endpoint.includes("tarriffs") ? { response_code: "00", data: ZVEND_TARIFFS.map(t => ({ code: t.code, name: t.label })) }
+        : endpoint.includes("locate") ? { response_code: "00", reference: `LOC-${Math.floor(10000 + Math.random() * 89999)}`, meter_number: "45039812990", updated: true }
         : { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, data: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, amount: Math.floor(2000 + Math.random() * 18000), at: new Date(Date.now() - i * 86400000 * 6).toISOString().slice(0, 10) })) };
       resolve({ ok: body.response_code === "00", code: String(body.response_code), durationMs: latency, body });
     }, latency);
@@ -670,7 +736,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: StoreCtx = {
     state, user, can, online, syncing, delegation, toasts, toast, dismissToast,
-    login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode, fetchZvendCatalog,
+    login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode, fetchZvendCatalog, syncLocates, updateLocate,
     saveScan, saveGps, addPhoto, saveCustomer, saveVideo, startField, markRead, markAllRead,
     auditCode, saveSettings, saveZvend, togglePerm, addUser, setUserActive, setDelegation, syncFacilities, pushAudit, testZvend,
   };

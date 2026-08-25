@@ -7,7 +7,7 @@ import { Btn, copyText, Icon, TonePill, useRoute } from "../components/ui";
 /* Contract data — mirrors App\Services\ZVendApiService (Laravel).     */
 /* ------------------------------------------------------------------ */
 type Ep = {
-  id: string; method: "GET" | "POST"; path: string; group: "Catalog" | "Meter Operations" | "Vending";
+  id: string; method: "GET" | "POST"; path: string; group: "Catalog" | "Meter Operations" | "Vending" | "Locate";
   desc: string; request: unknown; response: unknown; notes?: string; callable: boolean;
 };
 
@@ -109,6 +109,27 @@ const ENDPOINTS: Ep[] = [
     notes: "Tariff codes follow the MYTO classification. Required for installation initiation.",
   },
   {
+    id: "locate-get", method: "GET", path: "/v1/locate", group: "Locate", callable: true,
+    desc: "The locate table — ZVend's GPS registry of meters (meter_no, facility, coordinates). Z Admin pulls it to render the Meter Map.",
+    request: null,
+    response: {
+      response_code: "00",
+      data: [
+        { meter_number: "45039812990", facility: "FAC-IKY", latitude: 6.443112, longitude: 3.418733, accuracy_m: 12, updated_at: "2026-02-12T10:22:00Z" },
+        { meter_number: "45039813117", facility: "FAC-IKY", latitude: 6.444091, longitude: 3.417864, accuracy_m: 9, updated_at: "2026-02-11T15:47:00Z" },
+      ],
+      meta: { total: 14 },
+    },
+    notes: "Pulled by the Meter Map page via Refresh From ZVend.",
+  },
+  {
+    id: "locate-post", method: "POST", path: "/v1/locate", group: "Locate", callable: true,
+    desc: "Add or update a meter's position in the locate table. Z Admin only posts after a verified barcode scan + GPS capture by the Technical Man.",
+    request: { meter_number: "45039812990", facility: "FAC-IKY", latitude: 6.443112, longitude: 3.418733, accuracy_m: 12, captured_by: "Chike Eze" },
+    response: { response_code: "00", reference: "LOC-58812", meter_number: "45039812990", updated_at: "2026-02-13T09:41:12Z" },
+    notes: "Scan must match the target meter; GPS beyond the configured accuracy ceiling is rejected before posting.",
+  },
+  {
     id: "install", method: "POST", path: "/v1/meters/install", group: "Meter Operations", callable: true,
     desc: "Register a NEW meter. Fired only after MD approval. Returns the 20-digit tamper + clear codes.",
     request: { meter_number: "45039813401", facility: "FAC-IKY", manufacturer: "CONLOG", tariff: "R1" },
@@ -207,7 +228,7 @@ export default function ZVendIntegrationPage() {
 
   const ep = ENDPOINTS.find(e => e.id === active)!;
   const zv = state.settings.zvend;
-  const groups = useMemo(() => ["Meter Operations", "Catalog", "Vending"] as const, []);
+  const groups = useMemo(() => ["Meter Operations", "Locate", "Catalog", "Vending"] as const, []);
   const recentZvend = state.apiLogs.filter(l => l.endpoint.startsWith("/v1/")).slice(0, 6);
   const healthy = recentZvend.filter(l => l.status === "success").length;
 

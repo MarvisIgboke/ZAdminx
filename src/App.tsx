@@ -9,6 +9,7 @@ import { OperationListPage, NewInstallationPage, RequestCodePage, StartActivatio
 import { FacilitiesPage, FacilityDetailPage, CustomersPage, CustomerDetailPage, MetersPage, ReportsPage } from "./pages/data";
 import AdminPage, { ApiReferencePage, DatabaseSetupPage } from "./pages/admin";
 import ZVendIntegrationPage from "./pages/zvend";
+import { MeterMapPage } from "./pages/map";
 
 function AccessDenied({ perm }: { perm: string }) {
   const { nav } = useRoute();
@@ -52,6 +53,7 @@ function Router() {
     case OPS.inspection.path: page = opDetail("inspection"); break;
     case OPS.tamper.path: page = opDetail("tamper"); break;
     case OPS.clear.path: page = opDetail("clear"); break;
+    case "meter-map": page = can("map.view") ? <MeterMapPage /> : <AccessDenied perm="map.view" />; break;
     case "approvals": page = can("approvals.view") ? <ApprovalsPage /> : <AccessDenied perm="approvals.view" />; break;
     case "notifications": page = can("notifications.view") ? <NotificationsPage /> : <AccessDenied perm="notifications.view" />; break;
     case "history": page = can("history.view") ? <HistoryPage /> : <AccessDenied perm="history.view" />; break;

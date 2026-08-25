@@ -15,7 +15,10 @@ const NAV: { section: string; items: { label: string; to: string; icon: string; 
   { section: "", items: [{ label: "Dashboard", to: "", icon: "grid" }] },
   {
     section: "CORE OPERATIONS",
-    items: OP_ORDER.map(t => ({ label: OPS[t].label, to: OPS[t].path, icon: OPS[t].icon, perm: `${t}.view`, op: t })),
+    items: [
+      ...OP_ORDER.map(t => ({ label: OPS[t].label, to: OPS[t].path, icon: OPS[t].icon, perm: `${t}.view`, op: t })),
+      { label: "Meter Map", to: "meter-map", icon: "pin", perm: "map.view" },
+    ],
   },
   {
     section: "WORKFLOW",
