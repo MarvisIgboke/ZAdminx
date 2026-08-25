@@ -421,6 +421,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const stages = STAGES[op.type]; const stage = stages[Math.min(op.stageIdx, stages.length - 1)];
     const owner = actionableBy(op, activeDelegation(s0.delegation));
     if (owner !== u.role) return `This stage belongs to ${owner ? ROLE_LABEL[owner] : "another actor"}.`;
+    /* Hard evidence gates — enforced here, not just in the UI. */
+    if (op.type === "inspection" && d === "execute") {
+      if (op.scan?.matched !== true) return "Submission blocked — barcode verification must be completed.";
+      if (op.gps?.accepted !== true) return "Submission blocked — GPS capture is required.";
+      if (!op.video) return "Submission blocked — the inspection video must be recorded.";
+    }
+    if (op.type === "installation" && d === "execute") {
+      if (op.scan?.matched !== true) return "Submission blocked — barcode verification must be completed.";
+      if (op.gps?.accepted !== true) return "Submission blocked — GPS capture is required.";
+      if (op.photos.length < 4) return `Submission blocked — all 4 photographs required (${op.photos.length}/4).`;
+    }
     const isMDdelegated = stage.role === "MD" && u.role === "GENERAL_MANAGER";
     const text = isMDdelegated ? `${comment.trim()} — Approved under MD delegation.` : comment.trim();
     const c: Comment = { id: uid(), userId: u.id, userName: u.name, role: u.role, text, at: Date.now(), decision: d };

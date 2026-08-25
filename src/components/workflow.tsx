@@ -374,6 +374,8 @@ export function ApprovalPanel({ op }: { op: Op }) {
   if (owner !== user.role) return null;
   const stage = STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)];
   const isApprover = ["ENERGY_MANAGER", "GENERAL_MANAGER", "MD", "SECRETARY"].includes(owner) && stage.key !== "INITIATOR" && stage.key !== "DELIVERY" && stage.key !== "EXECUTION";
+  /* Inspection execution submits exclusively through the gated scan → GPS → video chain. */
+  if (op.type === "inspection" && stage.key === "EXECUTION") return null;
   const run = (d: Parameters<typeof decide>[1]) => {
     setErr(""); setBusy(d);
     setTimeout(() => { const e = decide(op.id, d, comment); if (e) setErr(e); else setComment(""); setBusy(null); }, 350);
@@ -535,6 +537,10 @@ export function VideoBlock({ op, autoSubmit = false }: { op: Op; autoSubmit?: bo
   const [url, setUrl] = useState<string | null>(null);
   const [camErr, setCamErr] = useState("");
   const [simulated, setSimulated] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scanOk = op.scan?.matched === true;
+  const gpsOk = op.gps?.accepted === true;
   const recRef = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -615,11 +621,30 @@ export function VideoBlock({ op, autoSubmit = false }: { op: Op; autoSubmit?: bo
       toast("Video saved.", "ok");
     }
   };
+  /* Gated submit — barcode, GPS and a recorded video are all mandatory. */
+  const finish = async () => {
+    setErr("");
+    if (!scanOk) { setErr("Submission blocked — barcode verification must be completed first."); return; }
+    if (!gpsOk) { setErr("Submission blocked — GPS capture is required first."); return; }
+    if (phase !== "review") { setErr("Submission blocked — record the inspection video first."); return; }
+    if (obs.trim().length < 5) { setErr("Observations require at least 5 characters."); return; }
+    setBusy(true);
+    await new Promise(r => setTimeout(r, 350));
+    save();
+    setBusy(false);
+  };
 
   if (op.video && op.observations && phase === "idle") return (
-    <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3">
-      <p className="flex items-center gap-2 font-display text-[13px] font-bold text-ok"><Icon name="video" size={15} /> VIDEO CAPTURED · {op.video.durationSec}s</p>
-      <p className="mt-1 text-[11.5px] text-ink2">Observations: {op.observations}</p>
+    <div className="space-y-2.5">
+      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3 anim-fade">
+        <p className="flex items-center gap-2 font-display text-[13px] font-bold text-ok"><Icon name="video" size={15} /> VIDEO CAPTURED · {op.video.durationSec}s</p>
+        <p className="mt-1 text-[11.5px] text-ink2">Observations: {op.observations}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn variant="ok" icon="check" loading={busy} onClick={() => void finish()}>Submit for review</Btn>
+        <Btn variant="outline" icon="video" onClick={() => setPhase("viewfinder")}>Re-record video</Btn>
+      </div>
+      {err && <p className="flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
     </div>
   );
 
@@ -688,11 +713,23 @@ export function VideoBlock({ op, autoSubmit = false }: { op: Op; autoSubmit?: bo
           {url ? <video src={url} controls playsInline className="aspect-video w-full rounded-xl border border-line bg-side object-contain" />
             : <div className="flex aspect-video flex-col items-center justify-center gap-1 rounded-xl border border-line bg-side"><Icon name="video" size={20} className="text-[#5d6b62]" /><p className="font-mono text-[11px] text-[#93a29a]">SIMULATED CAPTURE · {dur}s</p></div>}
           <Textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Inspection observations — seal state, display readings, terminal block…" />
+          {autoSubmit && (
+            <div className="grid gap-1.5 sm:grid-cols-4 anim-fade">
+              {[{ ok: scanOk, t: "Barcode verified" }, { ok: gpsOk, t: "GPS accepted" }, { ok: phase === "review", t: "Video recorded" }, { ok: obs.trim().length >= 5, t: "Observations ≥ 5" }].map(g => (
+                <span key={g.t} className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[10px] font-extrabold tracking-wide transition-colors ${g.ok ? "border-[#c2ddcd] bg-oksoft text-ok" : "border-[#eac5be] bg-dangersoft text-danger"}`}>
+                  <Icon name={g.ok ? "check" : "alert"} size={11} /> {g.t.toUpperCase()}
+                </span>
+              ))}
+            </div>
+          )}
+          {err && <p className="flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
           <div className="flex flex-wrap gap-2">
-            <Btn variant="ok" icon="check" disabled={obs.trim().length < 5} onClick={save}>{autoSubmit ? "Save & submit for review" : "Save video & observations"}</Btn>
+            <Btn variant="ok" icon="check" loading={busy} disabled={obs.trim().length < 5 || (autoSubmit && (!scanOk || !gpsOk))} onClick={autoSubmit ? () => void finish() : save}>{autoSubmit ? "Save & submit for review" : "Save video & observations"}</Btn>
             <Btn variant="outline" icon="video" onClick={() => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); urlRef.current = null; setUrl(null); setSimulated(false); openViewfinder(); }}>Discard & re-record</Btn>
           </div>
-          <p className="text-[10.5px] font-semibold text-mute">Observations require at least 5 characters — they become the execution comment.</p>
+          <p className="text-[10.5px] font-semibold text-mute">{autoSubmit
+            ? `Submission unlocks only when barcode${scanOk ? " ✓" : ""}, GPS${gpsOk ? " ✓" : ""}, video ✓ and observations are all complete.`
+            : "Observations require at least 5 characters — they become the execution comment."}</p>
         </div>
       )}
     </div>

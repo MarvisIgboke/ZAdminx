@@ -607,9 +607,22 @@ function CustomerForm({ existing, onSave }: { opId: string; existing?: CustomerI
 function InspectionExecution({ op }: { op: Op }) {
   const scanOk = op.scan?.matched === true;
   const gpsOk = op.gps?.accepted === true;
+  const videoOk = !!op.video;
   const videoReady = scanOk && gpsOk;
+  const allOk = scanOk && gpsOk && videoOk;
   return (
     <div className="space-y-4">
+      <div className={`flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors ${allOk ? "border-[#c2ddcd] bg-oksoft/70" : "border-[#ecd9b8] bg-warnsoft/60"}`}>
+        <Icon name={allOk ? "check" : "lock"} size={14} className={allOk ? "text-ok" : "text-warn"} />
+        <p className={`text-[11.5px] font-extrabold ${allOk ? "text-ok" : "text-warn"}`}>
+          {allOk ? "ALL EVIDENCE COMPLETE — SUBMISSION UNLOCKED" : "SUBMISSION LOCKED — COMPLETE ALL THREE EVIDENCE STEPS"}
+        </p>
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          {[{ ok: scanOk, t: "SCAN" }, { ok: gpsOk, t: "GPS" }, { ok: videoOk, t: "VIDEO" }].map(g => (
+            <span key={g.t} className={`rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-widest ${g.ok ? "bg-ok text-white" : "bg-ink/10 text-mute"}`}>{g.ok ? "✓ " : ""}{g.t}</span>
+          ))}
+        </div>
+      </div>
       <div>
         <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">1 · BARCODE VERIFICATION</p>
         <ScanBlock op={op} />
