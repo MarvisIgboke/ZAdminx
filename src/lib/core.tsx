@@ -10,7 +10,7 @@ export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" |
 export interface User { id: string; name: string; email: string; role: Role; active: boolean; }
 export interface Facility { id: string; code: string; name: string; area: string; lat: number; lng: number; status: string; syncedAt: number; }
 export interface Customer { id: string; name: string; phone: string; email: string; address: string; facilityId: string; }
-export interface Meter { id: string; number: string; facilityId: string; customerId?: string; status: string; installedAt?: number; }
+export interface Meter { id: string; number: string; facilityId: string; customerId?: string; status: string; installedAt?: number; manufacturer?: string; tariff?: string; }
 export interface Comment { id: string; userId: string; userName: string; role: Role; text: string; at: number; decision?: string; }
 export interface ScanRec { value: string; matched: boolean; at: number; }
 export interface GpsRec { lat: number; lng: number; accuracy: number; at: number; accepted: boolean; }
@@ -25,7 +25,7 @@ export interface Delegation { mdId: string; gmId: string; from: number; to: numb
 
 export interface Op {
   id: string; type: OpType; txn: string; status: OpStatus; stageIdx: number;
-  meterNumber: string; facilityId: string;
+  meterNumber: string; facilityId: string; manufacturer?: string; tariff?: string;
   initiatorId: string; initiatorName: string; initiatorRole: Role;
   createdAt: number; updatedAt: number;
   comments: Comment[];
@@ -322,13 +322,34 @@ function load(): AppState {
 }
 
 export interface Toast { id: string; text: string; tone: "ok" | "warn" | "danger" | "info"; }
+
+/* ZVend catalog reference lists — served by GET /v1/manufacturers and
+   GET /v1/tarriffs; the New Installation form pulls them live. */
+export interface ZvendCatalogItem { code: string; label: string; }
+export const ZVEND_MANUFACTURERS: ZvendCatalogItem[] = [
+  { code: "CONLOG", label: "Conlog (South Africa)" },
+  { code: "INHEMETER", label: "Inhemeter (China)" },
+  { code: "HEXING", label: "Hexing · Sanxing (China)" },
+  { code: "WASION", label: "Wasion Group (China)" },
+  { code: "HOLLEY", label: "Holley Technology (China)" },
+  { code: "LANDIS", label: "Landis+Gyr (Switzerland)" },
+  { code: "KAMSTRUP", label: "Kamstrup (Denmark)" },
+  { code: "ITRON", label: "Itron (USA)" },
+];
+export const ZVEND_TARIFFS: ZvendCatalogItem[] = [
+  { code: "R1", label: "R1 — Residential (≤ 50 kWh)" },
+  { code: "R2", label: "R2 — Residential (MD)" },
+  { code: "C1", label: "C1 — Commercial (Non-MD)" },
+  { code: "C2", label: "C2 — Commercial (MD)" },
+  { code: "A1", label: "A1 — Agricultural" },
+];
 interface StoreCtx {
   state: AppState; user: User | null; can: (p: string) => boolean;
   online: boolean; syncing: boolean; delegation: boolean; toasts: Toast[];
   toast: (text: string, tone?: Toast["tone"]) => void; dismissToast: (id: string) => void;
   login: (id: string) => void; logout: () => void;
   decide: (opId: string, d: Decision, comment: string) => string | null;
-  createInstallation: (d: { meterNumber: string; facilityId: string; comment: string }) => Op | null;
+  createInstallation: (d: { meterNumber: string; facilityId: string; manufacturer: string; tariff: string; comment: string }) => Op | null;
   createActivation: (d: { meterNumber: string; facilityId: string; customer: CustomerInfo; gps: GpsRec; photos: PhotoRec[]; scan: ScanRec; comment: string }) => Op | null;
   scheduleInspection: (d: { meterNumber: string; facilityId: string; date: number; instruction: string; durationSec: number }) => Op | null;
   requestCode: (t: "tamper" | "clear", d: { meterNumber: string; facilityId: string; via: string; comment: string }) => Op | null;
@@ -339,6 +360,7 @@ interface StoreCtx {
   auditCode: (opId: string, action: string) => void; saveSettings: (p: Partial<Settings>) => void;
   saveZvend: (p: Partial<Settings["zvend"]>) => void; togglePerm: (r: Role, p: string) => void;
   testZvend: (endpoint: string, method: string, payload: unknown, fail?: boolean) => Promise<{ ok: boolean; code: string; durationMs: number; body: Record<string, unknown> }>;
+  fetchZvendCatalog: (kind: "manufacturers" | "tariffs") => Promise<{ items: ZvendCatalogItem[]; latencyMs: number }>;
   addUser: (d: { name: string; email: string; role: Role }) => void; setUserActive: (id: string, a: boolean) => void;
   setDelegation: (d: Delegation | null) => void; syncFacilities: () => void; pushAudit: (action: string, detail: string) => void;
 }
@@ -489,12 +511,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const createInstallation: StoreCtx["createInstallation"] = d => {
     if (!/^\d+$/.test(d.meterNumber.trim())) { toast("Meter number must be numerals only.", "danger"); return null; }
     if (stateRef.current.meters.some(m => m.number === d.meterNumber.trim())) { toast("This meter number already exists.", "danger"); return null; }
+    if (!d.manufacturer) { toast("Meter manufacturer is required — pick one from the ZVend list.", "danger"); return null; }
+    if (!d.tariff) { toast("Meter tariff is required — pick one from the ZVend list.", "danger"); return null; }
     const u = stateRef.current.users.find(x => x.id === stateRef.current.currentUserId)!;
     let created: Op | null = null;
     mutate(s => {
-      const meter = { id: uid(), number: d.meterNumber.trim(), facilityId: d.facilityId, status: "IN_STOCK" };
+      const meter = { id: uid(), number: d.meterNumber.trim(), facilityId: d.facilityId, status: "IN_STOCK", manufacturer: d.manufacturer, tariff: d.tariff };
       const [ns, op] = begin(s, {
         type: "installation", status: "PENDING", stageIdx: 1, meterNumber: meter.number, facilityId: d.facilityId,
+        manufacturer: d.manufacturer, tariff: d.tariff,
         initiatorId: u.id, initiatorName: u.name, initiatorRole: u.role, note: d.comment, pendingSync: offline || undefined,
         comments: [{ id: uid(), userId: u.id, userName: u.name, role: u.role, text: d.comment || "Submitted for approval.", at: Date.now(), decision: "submit" }],
       });
@@ -601,6 +626,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addUser: StoreCtx["addUser"] = d => mutate(s => ({ ...s, users: [...s.users, { id: uid(), ...d, active: true }], audit: [...mkAudit(s, "user_created", `User ${d.name} (${ROLE_LABEL[d.role]}) created.`), ...s.audit] }));
   const setUserActive: StoreCtx["setUserActive"] = (id, a) => mutate(s => ({ ...s, users: s.users.map(u => u.id === id ? { ...u, active: a } : u), audit: [...mkAudit(s, "user_change", `User ${a ? "activated" : "deactivated"}.`), ...s.audit] }));
   const setDelegation: StoreCtx["setDelegation"] = d => mutate(s => ({ ...s, delegation: d, audit: [...mkAudit(s, d ? "delegation_created" : "delegation_revoked", d ? `MD delegation to GM (${new Date(d.from).toLocaleDateString()} → ${new Date(d.to).toLocaleDateString()}).` : "Delegation revoked."), ...s.audit] }));
+  /* ---- ZVend catalog fetch (New Installation dropdowns) ---- */
+  const fetchZvendCatalog: StoreCtx["fetchZvendCatalog"] = kind => new Promise((resolve, reject) => {
+    const endpoint = kind === "manufacturers" ? "/v1/manufacturers" : "/v1/tarriffs";
+    const latencyMs = Math.floor(180 + Math.random() * 320);
+    setTimeout(() => {
+      const actor = stateRef.current.users.find(x => x.id === stateRef.current.currentUserId)?.name ?? "Z Admin";
+      if (!online) {
+        mutate(st => ({ ...st, apiLogs: [{ id: uid(), at: Date.now(), user: actor, method: "GET", endpoint, status: "failed", code: "NET", durationMs: 0 }, ...st.apiLogs] }));
+        reject(new Error("offline"));
+        return;
+      }
+      mutate(st => ({ ...st, apiLogs: [{ id: uid(), at: Date.now(), user: actor, method: "GET", endpoint, status: "success", code: "200", durationMs: latencyMs }, ...st.apiLogs] }));
+      resolve({ items: kind === "manufacturers" ? ZVEND_MANUFACTURERS : ZVEND_TARIFFS, latencyMs });
+    }, latencyMs);
+  });
+
   /* ---- ZVend integration tester (console) — writes real api/audit logs ---- */
   const testZvend: StoreCtx["testZvend"] = (endpoint, method, payload, fail) => new Promise(resolve => {
     const latency = Math.floor(240 + Math.random() * 420);
@@ -617,6 +658,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : endpoint.includes("tamper") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, tamper_code: gen20() }
         : endpoint.includes("clear") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, clear_code: gen20() }
         : endpoint.includes("activate") ? { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, token_balance: 0 }
+        : endpoint.includes("manufacturers") ? { response_code: "00", data: ZVEND_MANUFACTURERS.map(m => ({ code: m.code, name: m.label })) }
+        : endpoint.includes("tarriffs") ? { response_code: "00", data: ZVEND_TARIFFS.map(t => ({ code: t.code, name: t.label })) }
         : { response_code: "00", reference: `ZV-REF-${Math.floor(10000 + Math.random() * 89999)}`, data: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, amount: Math.floor(2000 + Math.random() * 18000), at: new Date(Date.now() - i * 86400000 * 6).toISOString().slice(0, 10) })) };
       resolve({ ok: body.response_code === "00", code: String(body.response_code), durationMs: latency, body });
     }, latency);
@@ -627,7 +670,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: StoreCtx = {
     state, user, can, online, syncing, delegation, toasts, toast, dismissToast,
-    login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode,
+    login, logout, decide, createInstallation, createActivation, scheduleInspection, requestCode, fetchZvendCatalog,
     saveScan, saveGps, addPhoto, saveCustomer, saveVideo, startField, markRead, markAllRead,
     auditCode, saveSettings, saveZvend, togglePerm, addUser, setUserActive, setDelegation, syncFacilities, pushAudit, testZvend,
   };

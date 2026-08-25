@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import type { CustomerInfo, GpsRec, Op, OpType, PhotoRec } from "../lib/core";
+import { useEffect, useMemo, useState } from "react";
+import type { CustomerInfo, GpsRec, Op, OpType, PhotoRec, ZvendCatalogItem } from "../lib/core";
 import { age, fmtDate, fmtDT, OPS, STAGES, STATUS_META, TERMINAL } from "../lib/core";
 import { useStore } from "../lib/core";
 import { BarcodeScanner, PhotoCapture } from "../components/workflow";
@@ -143,12 +143,71 @@ const FALLBACK_PHOTO = "data:image/svg+xml;utf8," + encodeURIComponent(
   "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><rect width='640' height='480' fill='#232c26'/><rect x='170' y='110' width='300' height='220' fill='#2c3830' stroke='#e89b2e' stroke-width='3'/><text x='320' y='232' fill='#e8e6da' font-family='monospace' font-size='22' text-anchor='middle'>ZAROX FIELD PHOTO</text></svg>"
 );
 
+/* ZVend-fed dropdown: live loading state with endpoint + latency readout,
+   error state with retry, and inline validation. */
+function ZVendSelect({ label, endpoint, value, onChange, cat, onRetry, error, placeholder }: {
+  label: string; endpoint: string; value: string; onChange: (v: string) => void;
+  cat: CatalogState; onRetry: () => void; error?: string; placeholder: string;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <label className="text-[11px] font-extrabold tracking-wide text-ink2">{label.toUpperCase()} <span className="text-danger">*</span></label>
+        <span className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wider transition-colors ${
+          cat.status === "ok" ? "bg-oksoft text-ok" : cat.status === "error" ? "bg-dangersoft text-danger" : "bg-infosoft text-info"}`}>
+          {cat.status === "loading" && <Icon name="settings" size={9} className="spin" />}
+          {cat.status === "loading" ? "ZVEND…" : cat.status === "error" ? "ZVEND ✕" : `ZVEND · ${cat.latencyMs} ms`}
+        </span>
+      </div>
+      {cat.status === "loading" ? (
+        <div className="flex h-10 items-center gap-2 rounded-lg border border-dashed border-line2 bg-paper px-3">
+          <span className="h-3 w-3 rounded-sm bg-ink/10 anim-fade" />
+          <span className="font-mono text-[10.5px] font-bold text-mute">GET {endpoint} …</span>
+        </div>
+      ) : (
+        <Select value={value} onChange={e => onChange(e.target.value)} disabled={cat.status === "error"}>
+          <option value="">{cat.status === "error" ? "Unavailable — retry below" : placeholder}</option>
+          {cat.items.map(it => <option key={it.code} value={it.code}>{it.label}</option>)}
+        </Select>
+      )}
+      {error && <p className="mt-1 flex items-center gap-1 text-[10.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={11} />{error}</p>}
+      {!error && cat.status === "error" && (
+        <button onClick={onRetry} className="mt-1.5 flex items-center gap-1.5 rounded-md border border-[#eac5be] bg-dangersoft px-2 py-1 text-[10.5px] font-extrabold text-danger transition-colors hover:bg-dangersoft/60">
+          <Icon name="alert" size={11} /> ZVend unreachable — retry fetch
+        </button>
+      )}
+      {!error && cat.status === "ok" && (
+        <p className="mt-1 text-[10px] font-semibold text-mute">{cat.items.length} options · fetched from <span className="font-mono">{endpoint}</span></p>
+      )}
+    </div>
+  );
+}
+
 /* ================= New installation (Secretary) ================= */
+type CatalogState = { items: ZvendCatalogItem[]; status: "loading" | "ok" | "error"; latencyMs?: number };
 export function NewInstallationPage() {
-  const { state, createInstallation, user } = useStore();
+  const { state, createInstallation, user, fetchZvendCatalog } = useStore();
   const { nav } = useRoute();
   const [meter, setMeter] = useState(""); const [facilityId, setFacilityId] = useState(state.facilities[0]?.id ?? ""); const [comment, setComment] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [tariff, setTariff] = useState("");
+  const [mfg, setMfg] = useState<CatalogState>({ items: [], status: "loading" });
+  const [tar, setTar] = useState<CatalogState>({ items: [], status: "loading" });
   const [errs, setErrs] = useState<Record<string, string>>({});
+
+  /* Manufacturer + Tariff dropdowns are populated live from ZVend. */
+  const load = (kind: "manufacturers" | "tariffs", set: React.Dispatch<React.SetStateAction<CatalogState>>) => {
+    set({ items: [], status: "loading" });
+    fetchZvendCatalog(kind)
+      .then(r => set({ items: r.items, status: "ok", latencyMs: r.latencyMs }))
+      .catch(() => set({ items: [], status: "error" }));
+  };
+  useEffect(() => {
+    load("manufacturers", setMfg);
+    load("tariffs", setTar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (user && user.role !== "SECRETARY" && user.role !== "SUPER_ADMIN")
     return <GateNote text="Meter Installation is initiated by the Secretary. The new meter is not checked against ZVend at initiation — ZVend registration happens only after MD approval." onBack={() => nav("meter-installation")} />;
   const submit = () => {
@@ -157,9 +216,11 @@ export function NewInstallationPage() {
     else if (!/^\d+$/.test(meter.trim())) e.meter = "Numerals only.";
     else if (state.meters.some(m => m.number === meter.trim())) e.meter = "This meter number already exists.";
     if (!facilityId) e.facility = "Facility is required.";
+    if (!manufacturer) e.manufacturer = "Meter manufacturer is required.";
+    if (!tariff) e.tariff = "Meter tariff is required.";
     setErrs(e);
     if (Object.keys(e).length) return;
-    const op = createInstallation({ meterNumber: meter, facilityId, comment });
+    const op = createInstallation({ meterNumber: meter, facilityId, manufacturer, tariff, comment });
     if (op) nav(`meter-installation/${op.id}`);
   };
   return (
@@ -177,6 +238,12 @@ export function NewInstallationPage() {
           <Field label="Facility" error={errs.facility}>
             <Select value={facilityId} onChange={e => setFacilityId(e.target.value)}>{state.facilities.map(f => <option key={f.id} value={f.id}>{f.name} · {f.code}</option>)}</Select>
           </Field>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <ZVendSelect label="Meter Manufacturer" endpoint="/v1/manufacturers" value={manufacturer} onChange={v => { setManufacturer(v); setErrs(x => ({ ...x, manufacturer: "" })); }}
+              cat={mfg} onRetry={() => load("manufacturers", setMfg)} error={errs.manufacturer} placeholder="Select manufacturer…" />
+            <ZVendSelect label="Meter Tariff" endpoint="/v1/tarriffs" value={tariff} onChange={v => { setTariff(v); setErrs(x => ({ ...x, tariff: "" })); }}
+              cat={tar} onRetry={() => load("tariffs", setTar)} error={errs.tariff} placeholder="Select tariff class…" />
+          </div>
           <Field label="Secretary comment"><Textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="Context for the approvers…" /></Field>
           <Btn variant="volt" icon="arrowR" size="lg" className="w-full" onClick={submit}>SUBMIT TO ENERGY MANAGER</Btn>
         </div>
@@ -454,6 +521,12 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
               <div><p className="text-[9.5px] font-extrabold tracking-widest text-mute">METER</p><p className="font-mono text-[14px] font-bold">{op.meterNumber}</p></div>
               <div><p className="text-[9.5px] font-extrabold tracking-widest text-mute">FACILITY</p><p className="text-[13px] font-bold">{fac?.name}</p><p className="text-[10.5px] text-mute">{fac?.code} · {fac?.area}</p></div>
               <div><p className="text-[9.5px] font-extrabold tracking-widest text-mute">INITIATOR</p><p className="text-[13px] font-bold">{op.initiatorName}</p><p className="text-[10.5px] text-mute">{ROLE(op.initiatorRole)} · {fmtDT(op.createdAt)}</p></div>
+              {type === "installation" && (
+                <>
+                  <div><p className="text-[9.5px] font-extrabold tracking-widest text-mute">MANUFACTURER</p><p className="text-[13px] font-bold">{op.manufacturer ?? "—"}</p><p className="text-[10.5px] text-mute">via ZVend catalog</p></div>
+                  <div><p className="text-[9.5px] font-extrabold tracking-widest text-mute">TARIFF</p><p className="text-[13px] font-bold">{op.tariff ?? "—"}</p><p className="text-[10.5px] text-mute">via ZVend catalog</p></div>
+                </>
+              )}
             </div>
             {(op.note || op.instruction) && (
               <div className="mt-3 rounded-lg bg-paper px-3 py-2.5">

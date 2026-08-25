@@ -77,9 +77,41 @@ const ENDPOINTS: Ep[] = [
     },
   },
   {
+    id: "manufacturers", method: "GET", path: "/v1/manufacturers", group: "Catalog", callable: true,
+    desc: "Meter manufacturer reference list. Populates the Manufacturer dropdown on the New Meter Installation form.",
+    request: null,
+    response: {
+      response_code: "00",
+      data: [
+        { code: "CONLOG", name: "Conlog (South Africa)" },
+        { code: "INHEMETER", name: "Inhemeter (China)" },
+        { code: "HEXING", name: "Hexing · Sanxing (China)" },
+        { code: "LANDIS", name: "Landis+Gyr (Switzerland)" },
+      ],
+      meta: { total: 8 },
+    },
+    notes: "Required for installation initiation — Z Admin rejects submissions without a valid manufacturer code.",
+  },
+  {
+    id: "tarriffs", method: "GET", path: "/v1/tarriffs", group: "Catalog", callable: true,
+    desc: "MYTO tariff classes for new meters. Populates the Tariff dropdown on the New Meter Installation form.",
+    request: null,
+    response: {
+      response_code: "00",
+      data: [
+        { code: "R1", name: "Residential (≤ 50 kWh)" },
+        { code: "R2", name: "Residential (MD)" },
+        { code: "C1", name: "Commercial (Non-MD)" },
+        { code: "A1", name: "Agricultural" },
+      ],
+      meta: { total: 5 },
+    },
+    notes: "Tariff codes follow the MYTO classification. Required for installation initiation.",
+  },
+  {
     id: "install", method: "POST", path: "/v1/meters/install", group: "Meter Operations", callable: true,
     desc: "Register a NEW meter. Fired only after MD approval. Returns the 20-digit tamper + clear codes.",
-    request: { meter_number: "45039813401", facility: "FAC-IKY" },
+    request: { meter_number: "45039813401", facility: "FAC-IKY", manufacturer: "CONLOG", tariff: "R1" },
     response: {
       response_code: "00",
       reference: "ZV-REF-88213",
