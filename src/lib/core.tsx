@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 /* ================= Types ================= */
 export type Role = "SUPER_ADMIN" | "SECRETARY" | "TECHNICAL_MAN" | "ENERGY_MANAGER" | "GENERAL_MANAGER" | "MD" | "IT_MANAGER";
-export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear" | "control" | "wallet";
+export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear" | "control" | "wallet" | "flag";
 export type OpStatus = "PENDING" | "IN_PROGRESS" | "WAITING_ZVEND" | "ZVEND_SUCCESS" | "ZVEND_FAILED" | "ASSIGNED" | "SCHEDULED" | "COMPLETED" | "REJECTED" | "RETURNED" | "CANCELLED";
 export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" | "confirm" | "resubmit";
 
@@ -64,7 +64,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   SUPER_ADMIN: "Super Admin", SECRETARY: "Secretary", TECHNICAL_MAN: "Technical Man",
   ENERGY_MANAGER: "Energy Manager", GENERAL_MANAGER: "General Manager", MD: "Managing Director", IT_MANAGER: "IT Manager",
 };
-export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear", "control", "wallet"];
+export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear", "control", "wallet", "flag"];
 export const OPS: Record<OpType, { label: string; short: string; path: string; icon: string; prefix: string; blurb: string }> = {
   installation: { label: "Meter Installation", short: "Installation", path: "meter-installation", icon: "wrench", prefix: "INS", blurb: "New meter registration through EM → GM → MD → ZVend → field install." },
   activation: { label: "Meter Activation", short: "Activation", path: "meter-activation", icon: "bolt", prefix: "ACT", blurb: "Technical-Man-initiated energization with customer capture." },
@@ -73,6 +73,7 @@ export const OPS: Record<OpType, { label: string; short: string; path: string; i
   clear: { label: "Clear Code", short: "Clear", path: "clear-code", icon: "key", prefix: "CLR", blurb: "20-digit clear code issued by ZVend after MD approval." },
   control: { label: "Meter Control", short: "Control", path: "meter-control", icon: "power", prefix: "CTL", blurb: "Secretary-initiated ON/OFF power commands executed by ZVend after MD approval." },
   wallet: { label: "Wallet Mgt", short: "Wallet", path: "wallet-mgt", icon: "wallet", prefix: "WLT", blurb: "Secretary-initiated wallet funding & deduction executed by ZVend after GM → MD approval." },
+  flag: { label: "Flagged Meters", short: "Flagged", path: "flagged-meters", icon: "flag", prefix: "FLG", blurb: "Flag book — Secretary add/remove with approval chain, plus automatic tamper & power-off feeds." },
 };
 
 type StageRole = Role | "ZVEND" | "INITIATOR";
@@ -141,6 +142,13 @@ export const STAGES: Record<OpType, StageDef[]> = {
     ap("ZVEND", "ZVend Wallet Execution", "ZVEND"),
     ap("COMPLETED", "Completed", "SECRETARY"),
   ],
+  flag: [
+    ap("INITIATOR", "Secretary Flag Request", "SECRETARY"),
+    ap("ENERGY_MANAGER", "Energy Manager Approval", "ENERGY_MANAGER"),
+    ap("GENERAL_MANAGER", "General Manager Approval", "GENERAL_MANAGER"),
+    ap("MD", "MD Final Approval", "MD"),
+    ap("COMPLETED", "Completed", "SECRETARY"),
+  ],
 };
 export const STATUS_META: Record<OpStatus, { label: string; tone: "gray" | "amber" | "green" | "red" | "blue" | "teal" | "ink" }> = {
   PENDING: { label: "Pending", tone: "amber" }, IN_PROGRESS: { label: "In Progress", tone: "blue" },
@@ -160,6 +168,7 @@ export const PERMS = [
   "control.view", "control.create", "control.approve", "control.history",
   "approvals.view", "facilities.view", "facilities.sync", "customers.view", "meters.view",
   "reports.view", "notifications.view", "history.view", "map.view", "map.update", "wallet.view", "wallet.create", "wallet.approve", "wallet.history",
+  "flag.view", "flag.create", "flag.approve", "flag.history",
   "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation", "admin.database",
 ] as const;
 const viewAll = ["installation.view", "activation.view", "inspection.view", "tamper.view", "clear.view"];
@@ -168,12 +177,12 @@ const approveAll = viewAll.map(p => p.replace(".view", ".approve"));
 const dataView = ["facilities.view", "customers.view", "meters.view", "notifications.view"];
 export const DEFAULT_MATRIX: Record<Role, string[]> = {
   SUPER_ADMIN: [...PERMS],
-  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view", "control.view", "control.create", "control.approve", "control.history", "wallet.view", "wallet.create", "wallet.history"],
-  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update", "control.view", "control.history", "wallet.view", "wallet.history"],
-  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.history"],
-  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history"],
-  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history"],
-  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view", "control.view", "control.history", "wallet.view", "wallet.history"],
+  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view", "control.view", "control.create", "control.approve", "control.history", "wallet.view", "wallet.create", "wallet.history", "flag.view", "flag.create", "flag.approve", "flag.history"],
+  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update", "control.view", "control.history", "wallet.view", "wallet.history", "flag.view", "flag.history"],
+  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.history", "flag.view", "flag.approve", "flag.history"],
+  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history", "flag.view", "flag.approve", "flag.history"],
+  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history", "flag.view", "flag.approve", "flag.history"],
+  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view", "control.view", "control.history", "wallet.view", "wallet.history", "flag.view", "flag.history"],
 };
 
 /* ================= Helpers ================= */
