@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GpsRec, LocateRec, Meter } from "../lib/core";
 import { age, fmtDT } from "../lib/core";
 import { useStore } from "../lib/core";
@@ -55,6 +55,25 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep, route }: {
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 });
   const [drag, setDrag] = useState<{ x: number; y: number; tx: number; ty: number; scale: number; moved: boolean } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const viewRef = useRef(view); viewRef.current = view;
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const prevPts = useRef(new Map<number, { x: number; y: number }>());
+
+  const viewScale = () => {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return Math.max(VW / rect.width, VH / rect.height); // preserveAspectRatio slice
+  };
+  const clientToVB = (cx: number, cy: number) => {
+    const rect = svgRef.current!.getBoundingClientRect();
+    const s = viewScale();
+    return { x: (cx - rect.left - (rect.width - VW / s) / 2) * s, y: (cy - rect.top - (rect.height - VH / s) / 2) * s };
+  };
+  /* Cursor-anchored zoom — the point under the pointer stays put. */
+  const zoomAt = (vx: number, vy: number, f: number) => setView(v => {
+    const k = Math.min(3.2, Math.max(0.55, v.k * f));
+    const r = k / v.k;
+    return { k, tx: vx - (vx - v.tx) * r, ty: vy - (vy - v.ty) * r };
+  });
 
   const center = (meter: string, k = 1.7) => {
     const l = locates.find(x => x.meterNumber === meter);
@@ -69,19 +88,76 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep, route }: {
   });
   const reset = () => setView({ k: 1, tx: 0, ty: 0 });
 
+  /* Scroll wheel zoom (must be non-passive to preventDefault). */
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const p = clientToVB(e.clientX, e.clientY);
+      zoomAt(p.x, p.y, e.deltaY < 0 ? 1.16 : 1 / 1.16);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Two-finger pinch: zoom + pan by the midpoint. */
+  const pinch = (e: React.PointerEvent) => {
+    if (pts.current.size !== 2) return;
+    const [p1, p2] = [...pts.current.values()];
+    const ids = [...pts.current.keys()];
+    const q1 = prevPts.current.get(ids[0]), q2 = prevPts.current.get(ids[1]);
+    if (!q1 || !q2) return;
+    const d0 = Math.hypot(q1.x - q2.x, q1.y - q2.y);
+    const d1 = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    if (d0 > 0 && d1 > 0 && Math.abs(d1 - d0) > 0.5) {
+      const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      const vb = clientToVB(mid.x, mid.y);
+      zoomAt(vb.x, vb.y, d1 / d0);
+      const pm = { x: (q1.x + q2.x) / 2, y: (q1.y + q2.y) / 2 };
+      const s = viewScale();
+      setView(v => ({ ...v, tx: v.tx + (mid.x - pm.x) * s, ty: v.ty + (mid.y - pm.y) * s }));
+    }
+    void e;
+  };
+
   const pick = (meter: string) => { onSelect(meter); center(meter); };
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl border border-[#22302a] bg-[#101815]">
       <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice" className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
         onPointerDown={e => {
-          const rect = svgRef.current!.getBoundingClientRect();
-          setDrag({ x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, scale: VW / rect.width, moved: false });
-          (e.target as Element).setPointerCapture?.(e.pointerId);
+          pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          prevPts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          svgRef.current?.setPointerCapture(e.pointerId);
+          if (pts.current.size === 1) {
+            setDrag({ x: e.clientX, y: e.clientY, tx: viewRef.current.tx, ty: viewRef.current.ty, scale: viewScale(), moved: false });
+          } else {
+            setDrag(null); // pinch takes over from pan
+          }
         }}
-        onPointerMove={e => { if (drag) { const dx = (e.clientX - drag.x) * drag.scale, dy = (e.clientY - drag.y) * drag.scale; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; setView(v => ({ ...v, tx: drag.tx + dx, ty: drag.ty + dy })); } }}
-        onPointerUp={() => setDrag(null)}
-        onPointerLeave={() => setDrag(null)}
+        onPointerMove={e => {
+          if (!pts.current.has(e.pointerId)) return;
+          prevPts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pts.current.size === 2) { pinch(e); return; }
+          if (drag) {
+            const dx = (e.clientX - drag.x) * drag.scale, dy = (e.clientY - drag.y) * drag.scale;
+            if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+            setView(v => ({ ...v, tx: drag.tx + dx, ty: drag.ty + dy }));
+          }
+        }}
+        onPointerUp={e => {
+          pts.current.delete(e.pointerId);
+          prevPts.current.delete(e.pointerId);
+          if (pts.current.size === 1) {
+            const [p] = [...pts.current.values()];
+            setDrag({ x: p.x, y: p.y, tx: viewRef.current.tx, ty: viewRef.current.ty, scale: viewScale(), moved: true });
+          } else setDrag(null);
+        }}
+        onPointerCancel={e => { pts.current.delete(e.pointerId); prevPts.current.delete(e.pointerId); setDrag(null); }}
+        onDoubleClick={e => { const p = clientToVB(e.clientX, e.clientY); zoomAt(p.x, p.y, 1.6); }}
       >
         <defs>
           <pattern id="mgrid" width="34" height="34" patternUnits="userSpaceOnUse">
@@ -201,15 +277,27 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep, route }: {
       </svg>
 
       {/* map chrome */}
-      <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-2">
+      <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start gap-2">
         <span className="pointer-events-auto flex items-center gap-2 rounded-lg border border-[#22302a] bg-[#101815]/90 px-2.5 py-1.5 font-mono text-[9.5px] font-bold tracking-widest text-[#93a29a] backdrop-blur">
           {sweep ? <><Icon name="sync" size={11} className="spin text-volt" /> PULLING LOCATE TABLE…</> : <><span className="h-1.5 w-1.5 rounded-full bg-ok okdot" /> ZVEND LOCATE · LIVE</>}
         </span>
-        <div className="pointer-events-auto flex flex-col overflow-hidden rounded-lg border border-[#22302a] bg-[#101815]/90 backdrop-blur">
-          <button onClick={() => zoomBy(1.35)} title="Zoom in" className="p-2 text-[#93a29a] transition-colors hover:bg-side3 hover:text-paper"><Icon name="plus" size={13} /></button>
-          <button onClick={() => zoomBy(0.72)} title="Zoom out" className="border-y border-[#22302a] p-2 text-[#93a29a] transition-colors hover:bg-side3 hover:text-paper"><span className="block h-[2px] w-[13px] bg-current rounded" /></button>
-          <button onClick={reset} title="Reset view" className="p-2 text-[#93a29a] transition-colors hover:bg-side3 hover:text-paper"><Icon name="grid" size={12} /></button>
-        </div>
+      </div>
+
+      {/* zoom dock */}
+      <div className="pointer-events-auto absolute right-3 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center overflow-hidden rounded-xl border border-[#2a3a32] bg-[#101815]/95 shadow-[0_8px_28px_rgba(0,0,0,.45)] backdrop-blur">
+        <button onClick={() => zoomBy(1.3)} disabled={view.k >= 3.19} title="Zoom in"
+          className="flex h-11 w-11 items-center justify-center text-[#c8d3ca] transition-all hover:bg-side3 hover:text-volt active:scale-90 disabled:pointer-events-none disabled:opacity-25">
+          <Icon name="plus" size={17} />
+        </button>
+        <span className="w-full border-y border-[#22302a] py-1 text-center font-mono text-[9.5px] font-bold text-volt tnum" title="Current zoom">{Math.round(view.k * 100)}%</span>
+        <button onClick={() => zoomBy(1 / 1.3)} disabled={view.k <= 0.56} title="Zoom out"
+          className="flex h-11 w-11 items-center justify-center text-[#c8d3ca] transition-all hover:bg-side3 hover:text-volt active:scale-90 disabled:pointer-events-none disabled:opacity-25">
+          <span className="block h-[2.5px] w-[17px] rounded bg-current" />
+        </button>
+        <button onClick={reset} title="Reset view"
+          className="flex h-10 w-11 items-center justify-center border-t border-[#22302a] text-[#7d8b82] transition-all hover:bg-side3 hover:text-volt active:scale-90">
+          <Icon name="grid" size={14} />
+        </button>
       </div>
       <div className="pointer-events-none absolute left-3 top-12 flex flex-col items-start gap-1.5">
         <span className="flex items-center gap-1.5 rounded-md border border-[#22302a] bg-[#101815]/90 px-2 py-1 text-[9px] font-extrabold tracking-widest text-[#93a29a] backdrop-blur"><span className="h-2.5 w-2.5 rounded-full bg-[#42504a] ring-1 ring-[#0e1512]" /> METER PIN</span>
