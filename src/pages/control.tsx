@@ -133,7 +133,7 @@ export function MeterControlPage() {
         <div className="p-3.5"><p className="flex items-center gap-2 font-display text-[20px] font-bold leading-none text-ok"><span className="h-2.5 w-2.5 rounded-full bg-ok okdot" />{onN}</p><p className="mt-1 text-[9px] font-extrabold tracking-[0.16em] text-mute">ENERGIZED · "1"</p></div>
         <div className="p-3.5"><p className="font-display text-[20px] font-bold leading-none text-ink2 tnum">{offN}</p><p className="mt-1 text-[9px] font-extrabold tracking-[0.16em] text-mute">DISCONNECTED · "0"</p></div>
         <div className="p-3.5"><p className="font-display text-[20px] font-bold leading-none text-warn tnum">{flightN}</p><p className="mt-1 text-[9px] font-extrabold tracking-[0.16em] text-mute">REQUESTS IN FLIGHT</p></div>
-        <div className="p-3.5"><p className="font-mono text-[12px] font-bold leading-[20px]">{fmtDT(state.powerSyncedAt)}</p><p className="mt-1 text-[9px] font-extrabold tracking-[0.16em] text-mute">LAST SYNC · /v1/meters/power-status</p></div>
+        <div className="p-3.5"><p className="font-mono text-[12px] font-bold leading-[20px]">{fmtDT(state.powerSyncedAt)}</p><p className="mt-1 truncate text-[9px] font-extrabold tracking-[0.16em] text-mute">LAST SYNC{user?.role === "SUPER_ADMIN" ? " · /v1/meters/power-status" : ""}</p></div>
       </Card>
 
       {/* filters */}
@@ -199,20 +199,26 @@ export function MeterControlPage() {
 
         {/* right rail */}
         <div className="space-y-4">
-          <Card className="anim-rise p-4">
-            <p className="mb-2 flex items-center gap-2 font-display text-[14px] font-bold"><Icon name="plug" size={14} className="text-volt2" /> ZVend wire contract</p>
-            <div className="space-y-2.5">
-              <div className="rounded-lg border border-line bg-paper p-2.5">
-                <p className="flex items-center gap-2"><TonePill tone="green">GET</TonePill><span className="font-mono text-[10.5px] font-bold">/v1/meters/power-status</span></p>
-                <p className="mt-1 font-mono text-[9.5px] leading-relaxed text-mute">→ {'{ meter_number, power: "1"|"0", facility }[]'}</p>
+          {user?.role === "SUPER_ADMIN" && (
+            <Card className="anim-rise p-4">
+              <p className="mb-2 flex items-center gap-2 font-display text-[14px] font-bold">
+                <Icon name="plug" size={14} className="text-volt2" /> ZVend wire contract
+                <span className="ml-auto flex items-center gap-1 rounded-md bg-voltsoft px-1.5 py-0.5 text-[8.5px] font-extrabold tracking-widest text-volt2"><Icon name="shield" size={10} /> SUPER ADMIN</span>
+              </p>
+              <div className="space-y-2.5">
+                <div className="rounded-lg border border-line bg-paper p-2.5">
+                  <p className="flex items-center gap-2"><TonePill tone="green">GET</TonePill><span className="font-mono text-[10.5px] font-bold">/v1/meters/power-status</span></p>
+                  <p className="mt-1 font-mono text-[9.5px] leading-relaxed text-mute">→ {'{ meter_number, power: "1"|"0", facility }[]'}</p>
+                </div>
+                <div className="rounded-lg border border-line bg-paper p-2.5">
+                  <p className="flex items-center gap-2"><TonePill tone="amber">POST</TonePill><span className="font-mono text-[10.5px] font-bold">/v1/meters/control</span></p>
+                  <p className="mt-1 font-mono text-[9.5px] leading-relaxed text-mute">← {'{ meter_number, command: "1"|"0" }'} · synchronous<br />→ {'{ reference, response_code, executed, new_state }'}</p>
+                </div>
               </div>
-              <div className="rounded-lg border border-line bg-paper p-2.5">
-                <p className="flex items-center gap-2"><TonePill tone="amber">POST</TonePill><span className="font-mono text-[10.5px] font-bold">/v1/meters/control</span></p>
-                <p className="mt-1 font-mono text-[9.5px] leading-relaxed text-mute">← {'{ meter_number, command: "1"|"0" }'} · synchronous<br />→ {'{ reference, response_code, executed, new_state }'}</p>
-              </div>
-            </div>
-            <p className="mt-2.5 flex items-start gap-1.5 text-[10.5px] font-semibold leading-relaxed text-mute"><Icon name="info" size={12} className="mt-0.5 shrink-0" /> Power commands execute only after MD approval. Failure bounces back to the Secretary; success auto-completes and flips the registry.</p>
-          </Card>
+              <p className="mt-2.5 flex items-start gap-1.5 text-[10.5px] font-semibold leading-relaxed text-mute"><Icon name="info" size={12} className="mt-0.5 shrink-0" /> Power commands execute only after MD approval. Failure bounces back to the Secretary; success auto-completes and flips the registry.</p>
+              <p className="mt-1.5 flex items-center gap-1.5 border-t border-line pt-2 text-[9.5px] font-extrabold tracking-wider text-mute"><Icon name="lock" size={10} /> CONTRACT DETAIL — HIDDEN FROM ALL OTHER ROLES</p>
+            </Card>
+          )}
 
           <Card className="anim-rise">
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
