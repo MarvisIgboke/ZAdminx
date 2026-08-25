@@ -32,9 +32,28 @@ export function LoginPage() {
         </div>
         <p className="relative flex items-center gap-2 text-[10px] font-extrabold tracking-[0.2em] text-[#5d6b62]"><span className="h-1.5 w-1.5 rounded-full bg-volt livedot" />{live} LIVE OPERATIONS · ZVEND LINKED</p>
       </div>
-      <div className="flex flex-1 items-center justify-center bg-dots p-6">
+      <div className="flex flex-1 items-center justify-center bg-dots p-4 sm:p-6">
         <div className="w-full max-w-md anim-rise">
-          <h1 className="font-display text-[24px] font-bold tracking-tight">Sign in to Z Admin</h1>
+          {/* Compact brand block for phones — the full panel renders at lg+ */}
+          <div className="mb-6 rounded-2xl border border-side3 bg-side p-4 lg:hidden">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-volt text-ink"><Icon name="bolt" size={18} /></span>
+              <div>
+                <p className="font-display text-[16px] font-bold leading-none tracking-tight text-paper">Z ADMIN</p>
+                <p className="mt-1 text-[8px] font-extrabold tracking-[0.22em] text-[#7d8b82]">ZAROX ENERGY · FIELD OPERATIONS</p>
+              </div>
+              <span className="ml-auto flex items-center gap-1.5 text-[9px] font-extrabold tracking-widest text-[#7d8b82]"><span className="h-1.5 w-1.5 rounded-full bg-volt livedot" />{live} LIVE</span>
+            </div>
+            <div className="mt-3 grid grid-cols-5 gap-1.5">
+              {OP_ORDER.map(t => (
+                <div key={t} className="rounded-lg border border-side3 bg-side2 px-1 py-2 text-center">
+                  <Icon name={OPS[t].icon} size={14} className="mx-auto text-volt" />
+                  <p className="mt-1 font-display text-[13px] font-bold text-paper tnum">{state.operations.filter(o => o.type === t).length}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <h1 className="font-display text-[22px] font-bold tracking-tight sm:text-[24px]">Sign in to Z Admin</h1>
           <p className="mt-1 text-[12.5px] text-mute">Select a workspace identity — permissions follow the role matrix.</p>
           <div className="mt-5 space-y-2">
             {state.users.filter(u => u.active).map(u => (
@@ -87,17 +106,32 @@ export function DashboardPage() {
   const facOf = (op: Op) => state.facilities.find(f => f.id === op.facilityId)?.name ?? "—";
 
   const recordsTable = (
-    <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left">
-      <thead><tr className="bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2">TRANSACTION</th><th className="px-4 py-2">OPERATION</th><th className="px-4 py-2">METER</th><th className="px-4 py-2">STAGE</th><th className="px-4 py-2">STATUS</th></tr></thead>
-      <tbody>{recentRecords.map(op => (
-        <tr key={op.id} onClick={() => nav(`${OPS[op.type].path}/${op.id}`)} className="cursor-pointer border-t border-line/70 transition-colors hover:bg-paper">
-          <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{op.txn}</td>
-          <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[op.type].icon} size={13} className="text-volt2" />{OPS[op.type].short}</span></td>
-          <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
-          <td className="px-4 py-2.5 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
-          <td className="px-4 py-2.5"><StatusPill status={op.status} /></td>
-        </tr>))}</tbody>
-    </table></div>
+    <>
+      {/* Stacked rows on phones */}
+      <div className="divide-y divide-line/70 sm:hidden">
+        {recentRecords.map(op => (
+          <button key={op.id} onClick={() => nav(`${OPS[op.type].path}/${op.id}`)} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-paper">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ink/6 text-ink2"><Icon name={OPS[op.type].icon} size={14} /></span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center justify-between gap-2"><span className="truncate font-mono text-[11px] font-bold">{op.txn}</span><StatusPill status={op.status} /></span>
+              <span className="mt-0.5 block truncate text-[11px] text-mute">{OPS[op.type].short} · meter {op.meterNumber} · {STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      {/* Table at sm+ */}
+      <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[620px] text-left">
+        <thead><tr className="bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2">TRANSACTION</th><th className="px-4 py-2">OPERATION</th><th className="px-4 py-2">METER</th><th className="px-4 py-2">STAGE</th><th className="px-4 py-2">STATUS</th></tr></thead>
+        <tbody>{recentRecords.map(op => (
+          <tr key={op.id} onClick={() => nav(`${OPS[op.type].path}/${op.id}`)} className="cursor-pointer border-t border-line/70 transition-colors hover:bg-paper">
+            <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{op.txn}</td>
+            <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[op.type].icon} size={13} className="text-volt2" />{OPS[op.type].short}</span></td>
+            <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
+            <td className="px-4 py-2.5 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
+            <td className="px-4 py-2.5"><StatusPill status={op.status} /></td>
+          </tr>))}</tbody>
+      </table></div>
+    </>
   );
   const auditList = (
     <div className="divide-y divide-line/70">{recentAudit.map(a => (

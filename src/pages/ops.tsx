@@ -84,21 +84,41 @@ export function OperationListPage({ type }: { type: OpType }) {
         {rows.length === 0 ? (
           <div className="p-5"><EmptyState icon={meta.icon} title={`No ${meta.short.toLowerCase()} records match`} sub={ops.length === 0 ? "Records appear as the workflow produces them." : "Adjust filters or search."} action={canNew ? <Btn variant="primary" icon="plus" onClick={() => nav(newRoute)}>{newLabel}</Btn> : undefined} /></div>
         ) : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left">
-            <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute">
-              <th className="px-4 py-2.5">TRANSACTION</th><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">INITIATOR</th><th className="px-4 py-2.5">CURRENT STAGE</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">AGE</th>
-            </tr></thead>
-            <tbody>{rows.map(op => (
-              <tr key={op.id} onClick={() => nav(`${meta.path}/${op.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
-                <td className="px-4 py-3"><span className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/6 text-ink2"><Icon name={meta.icon} size={13} /></span><span className="font-mono text-[11.5px] font-bold">{op.txn}</span>{op.pendingSync && <span className="rounded bg-warnsoft px-1 py-px text-[9px] font-extrabold text-warn">QUEUED</span>}</span></td>
-                <td className="px-4 py-3 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
-                <td className="px-4 py-3 text-[12px] font-semibold">{state.facilities.find(f => f.id === op.facilityId)?.name ?? "—"}</td>
-                <td className="px-4 py-3"><p className="text-[12px] font-bold">{op.initiatorName}</p><p className="text-[9.5px] font-bold tracking-wider text-mute">{op.initiatorRole.replace(/_/g, " ")}</p></td>
-                <td className="px-4 py-3 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
-                <td className="px-4 py-3"><StatusPill status={op.status} pulse={!TERMINAL.includes(op.status)} /></td>
-                <td className="px-4 py-3 font-mono text-[11px] text-mute">{age(op.createdAt)}</td>
-              </tr>))}</tbody>
-          </table></div>
+          <>
+            {/* Stacked record rows on phones */}
+            <div className="divide-y divide-line/70 md:hidden">
+              {rows.map(op => (
+                <button key={op.id} onClick={() => nav(`${meta.path}/${op.id}`)} className="flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors active:bg-paper">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ink/6 text-ink2"><Icon name={meta.icon} size={15} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-mono text-[11.5px] font-bold">{op.txn}</span>
+                      {op.pendingSync && <span className="shrink-0 rounded bg-warnsoft px-1 py-px text-[9px] font-extrabold text-warn">QUEUED</span>}
+                      <span className="ml-auto shrink-0"><StatusPill status={op.status} pulse={!TERMINAL.includes(op.status)} /></span>
+                    </span>
+                    <span className="mt-1 block text-[11.5px] font-semibold text-ink2">meter {op.meterNumber} · {state.facilities.find(f => f.id === op.facilityId)?.name ?? "—"}</span>
+                    <span className="mt-0.5 block text-[10.5px] font-semibold text-mute">{op.initiatorName} · {STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label} · {age(op.createdAt)} ago</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            {/* Full table at md+ */}
+            <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[760px] text-left">
+              <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute">
+                <th className="px-4 py-2.5">TRANSACTION</th><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">INITIATOR</th><th className="px-4 py-2.5">CURRENT STAGE</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">AGE</th>
+              </tr></thead>
+              <tbody>{rows.map(op => (
+                <tr key={op.id} onClick={() => nav(`${meta.path}/${op.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
+                  <td className="px-4 py-3"><span className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/6 text-ink2"><Icon name={meta.icon} size={13} /></span><span className="font-mono text-[11.5px] font-bold">{op.txn}</span>{op.pendingSync && <span className="rounded bg-warnsoft px-1 py-px text-[9px] font-extrabold text-warn">QUEUED</span>}</span></td>
+                  <td className="px-4 py-3 font-mono text-[11.5px] text-ink2">{op.meterNumber}</td>
+                  <td className="px-4 py-3 text-[12px] font-semibold">{state.facilities.find(f => f.id === op.facilityId)?.name ?? "—"}</td>
+                  <td className="px-4 py-3"><p className="text-[12px] font-bold">{op.initiatorName}</p><p className="text-[9.5px] font-bold tracking-wider text-mute">{op.initiatorRole.replace(/_/g, " ")}</p></td>
+                  <td className="px-4 py-3 text-[11.5px] font-semibold text-mute">{STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)].label}</td>
+                  <td className="px-4 py-3"><StatusPill status={op.status} pulse={!TERMINAL.includes(op.status)} /></td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-mute">{age(op.createdAt)}</td>
+                </tr>))}</tbody>
+            </table></div>
+          </>
         )}
         <div className="px-4 pb-3"><Pagination page={page} pages={pages} onPage={setPage} /></div>
       </Card>

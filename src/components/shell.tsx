@@ -113,6 +113,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [bell, setBell] = useState(false);
   const [q, setQ] = useState("");
+  const [mSearch, setMSearch] = useState(false);
 
   const results = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -127,6 +128,35 @@ export function Shell({ children }: { children: ReactNode }) {
 
   if (!user) return null;
   const unread = state.notifications.filter(n => !n.read && (n.forRole === "ALL" || n.forRole === user.role));
+
+  const go = (fn: () => void) => { fn(); setQ(""); setMSearch(false); };
+  const resultsPanel = results && (
+    <div className="absolute left-0 right-0 top-11 z-40 overflow-hidden rounded-xl border border-line bg-card shadow-xl anim-rise">
+      {results.ops.length + results.facs.length + results.custs.length + results.meters.length === 0 && <p className="px-4 py-3 text-[12px] text-mute">No matches.</p>}
+      {results.ops.map(o => (
+        <button key={o.id} onClick={() => go(() => nav(`${OPS[o.type].path}/${o.id}`))} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
+          <Icon name={OPS[o.type].icon} size={14} className="text-volt2" />
+          <span className="font-mono text-[11.5px] font-bold">{o.txn}</span>
+          <span className="ml-auto text-[10px] font-bold text-mute">{OPS[o.type].short} · {o.meterNumber}</span>
+        </button>
+      ))}
+      {results.facs.map(f => (
+        <button key={f.id} onClick={() => go(() => nav(`facilities/${f.id}`))} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
+          <Icon name="building" size={14} className="text-volt2" /><span className="text-[12px] font-bold">{f.name}</span><span className="ml-auto font-mono text-[10px] text-mute">{f.code}</span>
+        </button>
+      ))}
+      {results.custs.map(c => (
+        <button key={c.id} onClick={() => go(() => nav(`customers/${c.id}`))} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
+          <Icon name="users" size={14} className="text-volt2" /><span className="text-[12px] font-bold">{c.name}</span><span className="ml-auto font-mono text-[10px] text-mute">{c.phone}</span>
+        </button>
+      ))}
+      {results.meters.map(m => (
+        <button key={m.id} onClick={() => go(() => nav("meters"))} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-paper">
+          <Icon name="gauge" size={14} className="text-volt2" /><span className="font-mono text-[11.5px] font-bold">{m.number}</span><span className="ml-auto text-[10px] font-extrabold text-mute">{m.status}</span>
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="flex h-full">
@@ -145,39 +175,15 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className="relative hidden max-w-md flex-1 sm:block">
               <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mute" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search facility, customer, meter, transaction…"
-                className="w-full rounded-lg border border-line bg-card py-2 pl-8.5 pr-3 text-[12.5px] font-semibold outline-none transition-colors focus:border-volt focus:ring-2 focus:ring-volt/25" />
-              {results && (
-                <div className="absolute left-0 right-0 top-11 overflow-hidden rounded-xl border border-line bg-card shadow-xl anim-rise">
-                  {results.ops.length + results.facs.length + results.custs.length + results.meters.length === 0 && <p className="px-4 py-3 text-[12px] text-mute">No matches.</p>}
-                  {results.ops.map(o => (
-                    <button key={o.id} onClick={() => { nav(`${OPS[o.type].path}/${o.id}`); setQ(""); }} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
-                      <Icon name={OPS[o.type].icon} size={14} className="text-volt2" />
-                      <span className="font-mono text-[11.5px] font-bold">{o.txn}</span>
-                      <span className="ml-auto text-[10px] font-bold text-mute">{OPS[o.type].short} · {o.meterNumber}</span>
-                    </button>
-                  ))}
-                  {results.facs.map(f => (
-                    <button key={f.id} onClick={() => { nav(`facilities/${f.id}`); setQ(""); }} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
-                      <Icon name="building" size={14} className="text-volt2" /><span className="text-[12px] font-bold">{f.name}</span><span className="ml-auto font-mono text-[10px] text-mute">{f.code}</span>
-                    </button>
-                  ))}
-                  {results.custs.map(c => (
-                    <button key={c.id} onClick={() => { nav(`customers/${c.id}`); setQ(""); }} className="flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-2.5 text-left hover:bg-paper">
-                      <Icon name="users" size={14} className="text-volt2" /><span className="text-[12px] font-bold">{c.name}</span><span className="ml-auto font-mono text-[10px] text-mute">{c.phone}</span>
-                    </button>
-                  ))}
-                  {results.meters.map(m => (
-                    <button key={m.id} onClick={() => { nav("meters"); setQ(""); }} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-paper">
-                      <Icon name="gauge" size={14} className="text-volt2" /><span className="font-mono text-[11.5px] font-bold">{m.number}</span><span className="ml-auto text-[10px] font-bold text-mute">{m.status}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                className="w-full rounded-lg border border-line bg-card py-2 pl-9 pr-3 text-[12.5px] font-semibold outline-none transition-colors focus:border-volt focus:ring-2 focus:ring-volt/25" />
+              {resultsPanel}
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <button className={`rounded-lg border p-2 transition-colors sm:hidden ${mSearch ? "border-volt bg-voltsoft text-volt2" : "border-line bg-card hover:border-ink/40"}`}
+                onClick={() => setMSearch(v => !v)} title="Search"><Icon name="search" size={15} /></button>
               {delegation && user.role === "GENERAL_MANAGER" && <span className="hidden rounded-md bg-warnsoft px-2 py-1 text-[9.5px] font-extrabold tracking-wider text-warn md:block">MD DELEGATION ACTIVE</span>}
               <span className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[9.5px] font-extrabold tracking-wider ${online ? "bg-oksoft text-ok" : "bg-dangersoft text-danger"}`}>
-                <Icon name={online ? "wifi" : "wifioff"} size={12} />{syncing ? "SYNCING" : online ? "ONLINE" : "OFFLINE"}
+                <Icon name={online ? "wifi" : "wifioff"} size={12} /><span className="hidden min-[400px]:inline">{syncing ? "SYNCING" : online ? "ONLINE" : "OFFLINE"}</span>
               </span>
               <div className="relative">
                 <button onClick={() => setBell(v => !v)} className="relative rounded-lg border border-line bg-card p-2 transition-colors hover:border-ink/40">
@@ -185,7 +191,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   {unread.length > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-volt px-1 text-[9px] font-extrabold text-ink tnum">{unread.length}</span>}
                 </button>
                 {bell && (
-                  <div className="absolute right-0 top-11 w-[320px] overflow-hidden rounded-xl border border-line bg-card shadow-xl anim-rise">
+                  <div className="absolute right-0 top-11 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-line bg-card shadow-xl anim-rise">
                     <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
                       <p className="font-display text-[13px] font-bold">Notifications</p>
                       <button onClick={() => setBell(false)} className="text-mute hover:text-ink"><Icon name="x" size={13} /></button>
@@ -206,6 +212,16 @@ export function Shell({ children }: { children: ReactNode }) {
               </div>
             </div>
           </div>
+          {mSearch && (
+            <div className="border-t border-line px-4 pb-3 pt-2.5 sm:hidden anim-fade">
+              <div className="relative">
+                <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mute" />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search facility, customer, meter, transaction…"
+                  className="w-full rounded-lg border border-line bg-card py-2 pl-9 pr-3 text-[13px] font-semibold outline-none transition-colors focus:border-volt focus:ring-2 focus:ring-volt/25" />
+                {resultsPanel}
+              </div>
+            </div>
+          )}
         </header>
 
         <main className="bg-dots min-w-0 flex-1 px-4 py-5 lg:px-6">{children}</main>
@@ -215,7 +231,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </footer>
       </div>
 
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[320px] flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(320px,calc(100vw-2rem))] flex-col gap-2">
         {toasts.map(t => (
           <button key={t.id} onClick={() => dismissToast(t.id)}
             className={`anim-toast pointer-events-auto flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left shadow-lg ${

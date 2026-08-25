@@ -171,7 +171,19 @@ function ApiLogsTab() {
   return (
     <Card className="anim-rise">
       <div className="border-b border-line px-4 py-3"><h2 className="font-display text-[15px] font-bold">API logs</h2><p className="text-[11px] text-mute">Sanitized payloads — secrets and issued codes never appear.</p></div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left">
+      <div className="divide-y divide-line/70 md:hidden">
+        {state.apiLogs.map(l => (
+          <div key={l.id} className="px-4 py-3">
+            <div className="flex items-center gap-2">
+              <TonePill tone={l.status === "success" ? "green" : l.status === "failed" ? "red" : "blue"}>{l.status.toUpperCase()}</TonePill>
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-bold">{l.method} {l.endpoint}</span>
+              <span className="shrink-0 font-mono text-[10px] text-mute">{l.durationMs} ms</span>
+            </div>
+            <p className="mt-1 truncate font-mono text-[10px] text-mute">{fmtDT(l.at)} · {l.user}{l.txn ? ` · ${l.txn}` : ""} · code {l.code}</p>
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[760px] text-left">
         <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">TIME</th><th className="px-4 py-2.5">USER</th><th className="px-4 py-2.5">ENDPOINT</th><th className="px-4 py-2.5">TXN</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">CODE</th><th className="px-4 py-2.5">DURATION</th></tr></thead>
         <tbody>{state.apiLogs.map(l => (
           <tr key={l.id} className="border-b border-line/60 last:border-0">

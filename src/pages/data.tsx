@@ -81,16 +81,28 @@ export function FacilityDetailPage({ id }: { id: string }) {
           </div>
         )}
         {tab === "meters" && (
-          <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-left">
-            <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">CUSTOMER</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">INSTALLED</th></tr></thead>
-            <tbody>{meters.map(m => (
-              <tr key={m.id} className="border-b border-line/60 last:border-0">
-                <td className="px-4 py-2.5 font-mono text-[12px] font-bold">{m.number}</td>
-                <td className="px-4 py-2.5 text-[12px] font-semibold">{state.customers.find(c => c.id === m.customerId)?.name ?? "—"}</td>
-                <td className="px-4 py-2.5"><TonePill tone={m.status === "ACTIVE" ? "green" : m.status === "FAULTY" ? "red" : m.status === "INSTALLED" ? "teal" : "gray"}>{m.status}</TonePill></td>
-                <td className="px-4 py-2.5 font-mono text-[11px] text-mute">{m.installedAt ? fmtDate(m.installedAt) : "—"}</td>
-              </tr>))}</tbody>
-          </table></div>
+          <>
+            <div className="divide-y divide-line/70 sm:hidden">
+              {meters.map(m => (
+                <div key={m.id} className="flex w-full items-center gap-3 px-4 py-3">
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2"><span className="truncate font-mono text-[11.5px] font-bold">{m.number}</span><TonePill tone={m.status === "ACTIVE" ? "green" : m.status === "FAULTY" ? "red" : m.status === "INSTALLED" ? "teal" : "gray"}>{m.status}</TonePill></span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-mute">{state.customers.find(c => c.id === m.customerId)?.name ?? "unassigned"}{m.installedAt ? ` · ${fmtDate(m.installedAt)}` : ""}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[520px] text-left">
+              <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">CUSTOMER</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">INSTALLED</th></tr></thead>
+              <tbody>{meters.map(m => (
+                <tr key={m.id} className="border-b border-line/60 last:border-0">
+                  <td className="px-4 py-2.5 font-mono text-[12px] font-bold">{m.number}</td>
+                  <td className="px-4 py-2.5 text-[12px] font-semibold">{state.customers.find(c => c.id === m.customerId)?.name ?? "—"}</td>
+                  <td className="px-4 py-2.5"><TonePill tone={m.status === "ACTIVE" ? "green" : m.status === "FAULTY" ? "red" : m.status === "INSTALLED" ? "teal" : "gray"}>{m.status}</TonePill></td>
+                  <td className="px-4 py-2.5 font-mono text-[11px] text-mute">{m.installedAt ? fmtDate(m.installedAt) : "—"}</td>
+                </tr>))}</tbody>
+            </table></div>
+          </>
         )}
         {tab === "operations" && (
           <div className="divide-y divide-line/70">
@@ -123,17 +135,31 @@ export function CustomersPage() {
       <div className="mb-3 max-w-sm"><TextInput value={q} onChange={e => { setQ(e.target.value); setPage(1); }} placeholder="Search name or phone…" /></div>
       <Card className="anim-rise">
         {rows.length === 0 ? <div className="p-5"><EmptyState icon="users" title="No customers match" /></div> : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left">
-            <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">CUSTOMER</th><th className="px-4 py-2.5">PHONE</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">METERS</th><th className="px-4 py-2.5">STATUS</th></tr></thead>
-            <tbody>{rows.slice((page - 1) * 8, page * 8).map(c => (
-              <tr key={c.id} onClick={() => nav(`customers/${c.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
-                <td className="px-4 py-3"><p className="text-[13px] font-extrabold">{c.name}</p><p className="text-[10.5px] text-mute">{c.email}</p></td>
-                <td className="px-4 py-3 font-mono text-[11.5px] text-ink2">{c.phone}</td>
-                <td className="px-4 py-3 text-[12px] font-semibold">{state.facilities.find(f => f.id === c.facilityId)?.name}</td>
-                <td className="px-4 py-3"><TonePill tone="ink">{state.meters.filter(m => m.customerId === c.id).length}</TonePill></td>
-                <td className="px-4 py-3"><TonePill tone="green">ACTIVE</TonePill></td>
-              </tr>))}</tbody>
-          </table></div>
+          <>
+            <div className="divide-y divide-line/70 sm:hidden">
+              {rows.slice((page - 1) * 8, page * 8).map(c => (
+                <button key={c.id} onClick={() => nav(`customers/${c.id}`)} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-paper">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold text-volt">{c.name.split(" ").map(w => w[0]).join("").slice(0, 2)}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2"><span className="truncate text-[13px] font-extrabold">{c.name}</span><TonePill tone="ink">{state.meters.filter(m => m.customerId === c.id).length} M</TonePill></span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-mute">{c.phone} · {state.facilities.find(f => f.id === c.facilityId)?.name}</span>
+                  </span>
+                  <Icon name="chevR" size={14} className="shrink-0 text-mute" />
+                </button>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[640px] text-left">
+              <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">CUSTOMER</th><th className="px-4 py-2.5">PHONE</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">METERS</th><th className="px-4 py-2.5">STATUS</th></tr></thead>
+              <tbody>{rows.slice((page - 1) * 8, page * 8).map(c => (
+                <tr key={c.id} onClick={() => nav(`customers/${c.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
+                  <td className="px-4 py-3"><p className="text-[13px] font-extrabold">{c.name}</p><p className="text-[10.5px] text-mute">{c.email}</p></td>
+                  <td className="px-4 py-3 font-mono text-[11.5px] text-ink2">{c.phone}</td>
+                  <td className="px-4 py-3 text-[12px] font-semibold">{state.facilities.find(f => f.id === c.facilityId)?.name}</td>
+                  <td className="px-4 py-3"><TonePill tone="ink">{state.meters.filter(m => m.customerId === c.id).length}</TonePill></td>
+                  <td className="px-4 py-3"><TonePill tone="green">ACTIVE</TonePill></td>
+                </tr>))}</tbody>
+            </table></div>
+          </>
         )}
         <div className="px-4 pb-3"><Pagination page={page} pages={pages} onPage={setPage} /></div>
       </Card>
@@ -212,7 +238,18 @@ export function MetersPage() {
         </Select>
       </div>
       <Card className="anim-rise">
-        <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left">
+        <div className="divide-y divide-line/70 sm:hidden">
+          {rows.map(m => (
+            <div key={m.id} className="flex w-full items-center gap-3 px-4 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ink/6 text-ink2"><Icon name="gauge" size={15} /></span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-2"><span className="truncate font-mono text-[12px] font-bold">{m.number}</span><TonePill tone={m.status === "ACTIVE" ? "green" : m.status === "FAULTY" ? "red" : m.status === "INSTALLED" ? "teal" : "gray"}>{m.status}</TonePill></span>
+                <span className="mt-0.5 block truncate text-[10.5px] text-mute">{state.facilities.find(f => f.id === m.facilityId)?.name} · {state.customers.find(c => c.id === m.customerId)?.name ?? "unassigned"}{m.installedAt ? ` · ${fmtDate(m.installedAt)}` : ""}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[680px] text-left">
           <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">METER NUMBER</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">CUSTOMER</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">INSTALLED</th></tr></thead>
           <tbody>{rows.map(m => (
             <tr key={m.id} className="border-b border-line/60 last:border-0">
@@ -288,19 +325,32 @@ export function ReportsPage() {
       </div>
       <Card className="anim-rise">
         {filtered.length === 0 ? <div className="p-5"><EmptyState icon="chart" title="No records in scope" sub="Loosen the filters." /></div> : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left">
-            <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">TXN</th><th className="px-4 py-2.5">OPERATION</th><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">INITIATOR</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">CREATED</th></tr></thead>
-            <tbody>{filtered.slice(0, 40).map(o => (
-              <tr key={o.id} onClick={() => nav(`${OPS[o.type].path}/${o.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
-                <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{o.txn}</td>
-                <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[o.type].icon} size={13} className="text-volt2" />{OPS[o.type].short}</span></td>
-                <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{o.meterNumber}</td>
-                <td className="px-4 py-2.5 text-[12px] font-semibold">{state.facilities.find(f => f.id === o.facilityId)?.name}</td>
-                <td className="px-4 py-2.5 text-[12px] font-semibold">{o.initiatorName}</td>
-                <td className="px-4 py-2.5"><StatusPill status={o.status} /></td>
-                <td className="px-4 py-2.5 font-mono text-[11px] text-mute">{fmtDate(o.createdAt)}</td>
-              </tr>))}</tbody>
-          </table></div>
+          <>
+            <div className="divide-y divide-line/70 md:hidden">
+              {filtered.slice(0, 40).map(o => (
+                <button key={o.id} onClick={() => nav(`${OPS[o.type].path}/${o.id}`)} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-paper">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ink/6 text-ink2"><Icon name={OPS[o.type].icon} size={14} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2"><span className="truncate font-mono text-[11px] font-bold">{o.txn}</span><StatusPill status={o.status} /></span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-mute">{OPS[o.type].short} · {o.meterNumber} · {state.facilities.find(f => f.id === o.facilityId)?.name} · {fmtDate(o.createdAt)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[820px] text-left">
+              <thead><tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute"><th className="px-4 py-2.5">TXN</th><th className="px-4 py-2.5">OPERATION</th><th className="px-4 py-2.5">METER</th><th className="px-4 py-2.5">FACILITY</th><th className="px-4 py-2.5">INITIATOR</th><th className="px-4 py-2.5">STATUS</th><th className="px-4 py-2.5">CREATED</th></tr></thead>
+              <tbody>{filtered.slice(0, 40).map(o => (
+                <tr key={o.id} onClick={() => nav(`${OPS[o.type].path}/${o.id}`)} className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-paper">
+                  <td className="px-4 py-2.5 font-mono text-[11.5px] font-bold">{o.txn}</td>
+                  <td className="px-4 py-2.5"><span className="flex items-center gap-1.5 text-[12px] font-bold"><Icon name={OPS[o.type].icon} size={13} className="text-volt2" />{OPS[o.type].short}</span></td>
+                  <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink2">{o.meterNumber}</td>
+                  <td className="px-4 py-2.5 text-[12px] font-semibold">{state.facilities.find(f => f.id === o.facilityId)?.name}</td>
+                  <td className="px-4 py-2.5 text-[12px] font-semibold">{o.initiatorName}</td>
+                  <td className="px-4 py-2.5"><StatusPill status={o.status} /></td>
+                  <td className="px-4 py-2.5 font-mono text-[11px] text-mute">{fmtDate(o.createdAt)}</td>
+                </tr>))}</tbody>
+            </table></div>
+          </>
         )}
         {filtered.length > 40 && <p className="px-4 py-2.5 text-[11px] font-bold text-mute">Showing first 40 — export CSV for the full set ({filtered.length}).</p>}
       </Card>
