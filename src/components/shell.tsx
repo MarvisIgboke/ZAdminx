@@ -50,7 +50,7 @@ const NAV: { section: string; items: { label: string; to: string; icon: string; 
   },
 ];
 
-function SidebarContent({ onNav }: { onNav?: () => void }) {
+function SidebarContent({ onNav, collapsed = false }: { onNav?: () => void; collapsed?: boolean }) {
   const { state, user, can, logout, delegation } = useStore();
   const { nav, path } = useRoute();
   if (!user) return null;
@@ -58,14 +58,17 @@ function SidebarContent({ onNav }: { onNav?: () => void }) {
   const unread = state.notifications.filter(n => !n.read && (n.forRole === "ALL" || n.forRole === user.role)).length;
   return (
     <div className="flex h-full flex-col">
-      <button onClick={() => { nav(""); onNav?.(); }} className="flex items-center gap-2.5 px-5 pb-5 pt-6 text-left">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-volt text-ink"><Icon name="bolt" size={19} /></span>
-        <span>
-          <span className="block font-display text-[17px] font-bold leading-none tracking-tight text-paper">Z ADMIN</span>
-          <span className="mt-1 block text-[8.5px] font-extrabold tracking-[0.22em] text-[#7d8b82]">ZAROX ENERGY · v2.0</span>
-        </span>
+      <button onClick={() => { nav(""); onNav?.(); }} title="Dashboard"
+        className={collapsed ? "flex items-center justify-center pb-5 pt-6" : "flex items-center gap-2.5 px-5 pb-5 pt-6 text-left"}>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-volt text-ink"><Icon name="bolt" size={19} /></span>
+        {!collapsed && (
+          <span>
+            <span className="block font-display text-[17px] font-bold leading-none tracking-tight text-paper">Z ADMIN</span>
+            <span className="mt-1 block text-[8.5px] font-extrabold tracking-[0.22em] text-[#7d8b82]">ZAROX ENERGY · v2.0</span>
+          </span>
+        )}
       </button>
-      <nav className="flex-1 overflow-y-auto px-3 pb-4">
+      <nav className={`flex-1 overflow-y-auto pb-4 ${collapsed ? "px-2" : "px-3"}`}>
         {NAV.map(sec => {
           const items = sec.items.filter(it => {
             if (it.roles) return it.roles.includes(user.role);
@@ -75,17 +78,21 @@ function SidebarContent({ onNav }: { onNav?: () => void }) {
           if (items.length === 0) return null;
           return (
             <div key={sec.section || "root"} className="mb-4">
-              {sec.section && <p className="mb-1.5 px-2.5 text-[9px] font-extrabold tracking-[0.22em] text-[#5d6b62]">{sec.section}</p>}
+              {sec.section && (collapsed
+                ? <div className="mx-2.5 mb-2 border-t border-side3" />
+                : <p className="mb-1.5 px-2.5 text-[9px] font-extrabold tracking-[0.22em] text-[#5d6b62]">{sec.section}</p>)}
               {items.map(it => {
                 const active = path === it.to || (it.to !== "" && path.startsWith(it.to + "/")) || (it.to !== "" && path === it.to);
                 const badge = it.op ? counts[it.op] : it.to === "notifications" ? unread : 0;
                 return (
-                  <button key={it.to} onClick={() => { nav(it.to); onNav?.(); }}
-                    className={`group mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] font-bold transition-all ${
+                  <button key={it.to} onClick={() => { nav(it.to); onNav?.(); }} title={collapsed ? `${it.label}${badge > 0 ? ` · ${badge} pending` : ""}` : undefined}
+                    className={`group relative mb-0.5 flex w-full items-center rounded-lg text-left text-[12.5px] font-bold transition-all ${collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2"} ${
                       active ? "bg-side3 text-paper shadow-[inset_2px_0_0_#e89b2e]" : "text-[#a8b3ab] hover:bg-side2 hover:text-paper"}`}>
-                    <Icon name={it.icon} size={15} className={active ? "text-volt" : "text-[#7d8b82] group-hover:text-[#a8b3ab]"} />
-                    <span className="flex-1">{it.label}</span>
-                    {badge > 0 && <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-extrabold tnum ${active ? "bg-volt text-ink" : "bg-side3 text-volt"}`}>{badge}</span>}
+                    <Icon name={it.icon} size={15} className={`shrink-0 ${active ? "text-volt" : "text-[#7d8b82] group-hover:text-[#a8b3ab]"}`} />
+                    {!collapsed && <span className="flex-1">{it.label}</span>}
+                    {badge > 0 && (collapsed
+                      ? <span className="absolute right-1 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-volt px-1 text-[8.5px] font-extrabold text-ink tnum">{badge}</span>
+                      : <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-extrabold tnum ${active ? "bg-volt text-ink" : "bg-side3 text-volt"}`}>{badge}</span>)}
                   </button>
                 );
               })}
@@ -93,13 +100,15 @@ function SidebarContent({ onNav }: { onNav?: () => void }) {
           );
         })}
       </nav>
-      <div className="border-t border-side3 p-3">
-        <div className="flex items-center gap-2.5 rounded-lg bg-side2 p-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-volt/15 text-[10.5px] font-extrabold text-volt">{user.name.split(" ").map(w => w[0]).join("").slice(0, 2)}</span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[12px] font-bold text-paper">{user.name}</p>
-            <p className="truncate text-[9.5px] font-bold tracking-wider text-[#7d8b82]">{user.role.replace(/_/g, " ")}</p>
-          </div>
+      <div className={`border-t border-side3 ${collapsed ? "p-2" : "p-3"}`}>
+        <div className={`flex items-center rounded-lg bg-side2 ${collapsed ? "flex-col gap-1.5 p-2" : "gap-2.5 p-2.5"}`}>
+          <span title={`${user.name} · ${user.role.replace(/_/g, " ")}`} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-volt/15 text-[10.5px] font-extrabold text-volt">{user.name.split(" ").map(w => w[0]).join("").slice(0, 2)}</span>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-bold text-paper">{user.name}</p>
+              <p className="truncate text-[9.5px] font-bold tracking-wider text-[#7d8b82]">{user.role.replace(/_/g, " ")}</p>
+            </div>
+          )}
           <button onClick={logout} title="Sign out" className="rounded-md p-1.5 text-[#7d8b82] transition-colors hover:bg-side3 hover:text-paper"><Icon name="logout" size={15} /></button>
         </div>
       </div>
@@ -114,6 +123,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const [bell, setBell] = useState(false);
   const [q, setQ] = useState("");
   const [mSearch, setMSearch] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("zadmin.nav.collapsed") === "1"; } catch { return false; } });
+  const toggleNav = () => setCollapsed(v => { const next = !v; try { localStorage.setItem("zadmin.nav.collapsed", next ? "1" : "0"); } catch { /* storage unavailable */ } return next; });
 
   const results = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -160,7 +171,13 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full">
-      <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 bg-side lg:block"><SidebarContent /></aside>
+      <aside className={`relative sticky top-0 hidden h-screen shrink-0 bg-side transition-[width] duration-300 ease-out lg:block ${collapsed ? "w-[72px]" : "w-[248px]"}`}>
+        <SidebarContent collapsed={collapsed} />
+        <button onClick={toggleNav} title={collapsed ? "Expand navigation" : "Collapse navigation"}
+          className="absolute -right-3 top-[74px] z-20 flex h-6 w-6 items-center justify-center rounded-full border border-line bg-card text-ink2 shadow-md transition-all hover:scale-110 hover:border-volt hover:text-volt2">
+          <Icon name={collapsed ? "chevR" : "chevL"} size={12} />
+        </button>
+      </aside>
       {drawer && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setDrawer(false)}>
           <div className="absolute inset-0 bg-ink/55 anim-fade" />
