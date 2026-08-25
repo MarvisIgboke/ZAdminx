@@ -1,765 +1,749 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Op } from "../lib/types";
-import { actionableBy, fmtDT, fmtTime, mmss, OPS, ROLE_LABEL, STAGES } from "../lib/types";
-import { useStore } from "../lib/store";
-import { Btn, CodeBox, Field, Icon, Modal, Select, StatusPill, Textarea, TextInput, TonePill } from "./ui";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { Html5Qrcode } from "html5-qrcode";
+import type { Op } from "../lib/core";
+import { actionableBy, fmtDT, ROLE_LABEL, STAGES, TERMINAL } from "../lib/core";
+import { useStore } from "../lib/core";
+import { Btn, copyText, Icon, Modal, StatusPill, TextInput, Textarea, TonePill } from "./ui";
 
-// ============================================================
-// Photo synthesis (canvas-based field capture)
-// ============================================================
-export function snapPhoto(label: string, meter: string, gpsLat?: number, gpsLng?: number): string {
-  const c = document.createElement("canvas");
-  c.width = 480; c.height = 360;
-  const x = c.getContext("2d");
-  if (!x) return "";
-  const g = x.createLinearGradient(0, 0, 0, 360);
-  g.addColorStop(0, "#182420"); g.addColorStop(1, "#0c120f");
-  x.fillStyle = g; x.fillRect(0, 0, 480, 360);
-  x.strokeStyle = "rgba(232,155,46,0.10)"; x.lineWidth = 1;
-  for (let i = 0; i <= 480; i += 40) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 360); x.stroke(); }
-  for (let i = 0; i <= 360; i += 40) { x.beginPath(); x.moveTo(0, i); x.lineTo(480, i); x.stroke(); }
-  x.fillStyle = "#1e2b23"; x.fillRect(140, 66, 200, 168);
-  x.strokeStyle = "#e89b2e"; x.lineWidth = 2; x.strokeRect(140, 66, 200, 168);
-  x.fillStyle = "#0c120f"; x.fillRect(168, 96, 144, 46);
-  x.fillStyle = "#e89b2e"; x.font = "700 19px JetBrains Mono, monospace";
-  x.fillText(meter.slice(-8), 184, 126);
-  x.fillStyle = "#93a29a"; x.font = "600 10px JetBrains Mono, monospace";
-  x.fillText("ZRK-K1 · PREPAID", 168, 166);
-  for (let i = 0; i < 420; i++) {
-    x.fillStyle = `rgba(255,255,255,${Math.random() * 0.05})`;
-    x.fillRect(Math.random() * 480, Math.random() * 360, 1.4, 1.4);
-  }
-  x.fillStyle = "#e89b2e"; x.font = "800 13px Manrope, sans-serif";
-  x.fillText(label.toUpperCase(), 16, 26);
-  x.fillStyle = "#93a29a"; x.font = "600 10.5px JetBrains Mono, monospace";
-  x.fillText(new Date().toLocaleString("en-GB"), 16, 342);
-  x.fillText(gpsLat ? `${gpsLat.toFixed(4)}, ${gpsLng?.toFixed(4)}` : "GPS PENDING", 210, 342);
-  x.fillText("Z ADMIN FIELD", 380, 342);
-  return c.toDataURL("image/jpeg", 0.72);
+/* ================= Real camera barcode scanner ================= */
+const READER_ID = "zadmin-barcode-reader";
+export function BarcodeScanner({ title = "Scan barcode", hint, onClose, onDetect }: {
+  title?: string; hint?: string; onClose: () => void; onDetect: (code: string, via: "camera" | "manual") => void;
+}) {
+  const [cam, setCam] = useState<"starting" | "live" | "error">("starting");
+  const [errMsg, setErrMsg] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState("");
+  const [flash, setFlash] = useState<string | null>(null);
+  const [bootKey, setBootKey] = useState(0);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const lastRef = useRef({ code: "", at: 0 });
+  const onDetectRef = useRef(onDetect); onDetectRef.current = onDetect;
+
+  useEffect(() => {
+    let cancelled = false;
+    const boot = async () => {
+      const prev = scannerRef.current;
+      if (prev) { try { if (prev.isScanning) await prev.stop(); prev.clear(); } catch { /* noop */ } scannerRef.current = null; }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        if (!cancelled) { setCam("error"); setErrMsg("This browser does not expose a camera. Use manual entry below."); }
+        return;
+      }
+      const scanner = new Html5Qrcode(READER_ID, { verbose: false });
+      scannerRef.current = scanner;
+      try {
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, aspectRatio: 1.6 },
+          decoded => {
+            const t = Date.now();
+            if (lastRef.current.code === decoded && t - lastRef.current.at < 2500) return;
+            lastRef.current = { code: decoded, at: t };
+            setFlash(decoded);
+            setTimeout(() => onDetectRef.current(decoded, "camera"), 420);
+          },
+          () => { /* per-frame silence while nothing is in view */ },
+        );
+        if (!cancelled) setCam("live");
+      } catch (e) {
+        if (cancelled) return;
+        const name = (e as { name?: string })?.name ?? "";
+        setCam("error");
+        setErrMsg(
+          name === "NotAllowedError" ? "Camera permission denied. Allow camera access for this site, then retry — or use manual entry."
+            : name === "NotFoundError" ? "No camera was found on this device. Use manual entry below."
+            : name === "NotReadableError" ? "The camera is busy in another application. Close it and retry, or use manual entry."
+            : "The camera could not be started. Use manual entry below.");
+      }
+    };
+    setCam("starting"); boot();
+    return () => {
+      cancelled = true;
+      const s = scannerRef.current; scannerRef.current = null;
+      if (s) { try { if (s.isScanning) s.stop().then(() => s.clear()).catch(() => s.clear()); else s.clear(); } catch { /* noop */ } }
+    };
+  }, [bootKey]);
+
+  return (
+    <Modal open onClose={onClose} title={<span className="flex items-center gap-2"><Icon name="scan" size={16} className="text-volt2" />{title}</span>} wide>
+      <div className="space-y-3">
+        <div className="relative aspect-video overflow-hidden rounded-xl bg-side">
+          <div id={READER_ID} className="absolute inset-0 [&_video]:h-full [&_video]:w-full [&_video]:object-cover" />
+          {cam === "live" && !flash && (
+            <div className="pointer-events-none absolute inset-0">
+              <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-volt" />
+              <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-volt" />
+              <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-volt" />
+              <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-volt" />
+              <span className="scanline absolute left-10 right-10 h-[2px] rounded bg-volt shadow-[0_0_16px_#e89b2e]" />
+              <span className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/45 to-transparent" />
+              <span className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/45 to-transparent" />
+            </div>
+          )}
+          {cam === "starting" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5">
+              <Icon name="camera" size={26} className="spin text-volt" />
+              <p className="font-mono text-[11px] font-bold tracking-[0.18em] text-[#93a29a]">REQUESTING CAMERA…</p>
+            </div>
+          )}
+          {cam === "error" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-dangersoft text-danger"><Icon name="alert" size={18} /></span>
+              <p className="max-w-sm text-[12.5px] font-semibold leading-snug text-[#c9d3cc]">{errMsg}</p>
+              {!errMsg.includes("does not expose") && <Btn size="sm" variant="outline" icon="camera" onClick={() => setBootKey(k => k + 1)}>Retry camera</Btn>}
+            </div>
+          )}
+          {flash && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-ok/20 backdrop-blur-[2px]">
+              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-ok text-white anim-rise"><Icon name="check" size={20} /></span>
+              <p className="font-mono text-[13px] font-bold text-white">CODE CAPTURED</p>
+              <p className="max-w-[80%] truncate font-mono text-[11.5px] font-bold text-[#d7efe1]">{flash}</p>
+            </div>
+          )}
+          {cam === "live" && !flash && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 px-4 py-2.5">
+              <span className="h-2 w-2 rounded-full bg-ok okdot" />
+              <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#c9d3cc]">LIVE · ALIGN THE BARCODE INSIDE THE FRAME</p>
+            </div>
+          )}
+        </div>
+        {hint && <p className="text-[11.5px] font-semibold text-mute">{hint}</p>}
+        {manualOpen ? (
+          <div className="flex gap-2 anim-rise">
+            <TextInput autoFocus value={manual} onChange={e => setManual(e.target.value.replace(/\D/g, ""))} placeholder="Key the meter number…" className="font-mono" />
+            <Btn variant="ok" icon="check" disabled={!manual.trim()} onClick={() => manual.trim() && onDetect(manual.trim(), "manual")}>Confirm</Btn>
+            <Btn variant="ghost" onClick={() => setManualOpen(false)}>Cancel</Btn>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10.5px] font-extrabold tracking-wider text-mute">CODE-128 · EAN · QR SUPPORTED</p>
+            <div className="flex gap-2">
+              <Btn variant="outline" icon="keyboard" onClick={() => setManualOpen(true)}>Enter manually</Btn>
+              <Btn variant="ghost" onClick={onClose}>Close</Btn>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 }
 
-// ============================================================
-// Timeline
-// ============================================================
+/* ================= Field photo capture ================= */
+/* Always returns a VALID data URL — a malformed fallback (missing "data:"
+   prefix) renders as a broken image, which is what made captures look dead. */
+const photoFallback = (label: string) =>
+  "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'>` +
+    `<rect width='640' height='480' fill='#232c26'/>` +
+    `<g stroke='rgba(232,155,46,0.16)'><path d='M0 0H640V480H0Z' fill='none'/></g>` +
+    `<rect x='170' y='110' width='300' height='220' fill='#2c3830' stroke='#e89b2e' stroke-width='3'/>` +
+    `<text x='320' y='222' fill='#e8e6da' font-family='monospace' font-size='21' text-anchor='middle'>ZAROX FIELD PHOTO</text>` +
+    `<text x='320' y='254' fill='#e89b2e' font-family='monospace' font-size='15' text-anchor='middle'>${label.toUpperCase()}</text>` +
+    `<text x='320' y='452' fill='#9aa79e' font-family='monospace' font-size='12' text-anchor='middle'>${new Date().toLocaleString()}</text>` +
+    `</svg>`
+  );
+
+export function snapPhoto(label: string, meter: string, lat?: number, lng?: number): string {
+  try {
+    const c = document.createElement("canvas"); c.width = 640; c.height = 480;
+    const x = c.getContext("2d");
+    if (!x) return photoFallback(label);
+  const g = x.createLinearGradient(0, 0, 640, 480);
+  g.addColorStop(0, "#232c26"); g.addColorStop(1, "#10160f");
+  x.fillStyle = g; x.fillRect(0, 0, 640, 480);
+  x.strokeStyle = "rgba(232,155,46,0.16)";
+  for (let i = 0; i < 640; i += 32) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 480); x.stroke(); }
+  for (let i = 0; i < 480; i += 32) { x.beginPath(); x.moveTo(0, i); x.lineTo(640, i); x.stroke(); }
+  x.fillStyle = "#2c3830"; x.fillRect(170, 110, 300, 220);
+  x.strokeStyle = "#e89b2e"; x.lineWidth = 3; x.strokeRect(170, 110, 300, 220);
+  x.fillStyle = "#0d120e"; x.fillRect(195, 135, 250, 60);
+  x.fillStyle = "#7ef0b0"; x.font = "bold 30px monospace"; x.fillText(meter.slice(0, 10), 210, 175);
+  x.fillStyle = "#e8e6da"; x.font = "bold 15px monospace";
+  for (let i = 0; i < 24; i++) x.fillRect(200 + i * 10, 230, i % 3 === 0 ? 5 : 2, 55);
+  x.fillStyle = "#e89b2e"; x.font = "bold 18px sans-serif"; x.fillText("ZAROX · " + label.toUpperCase(), 24, 40);
+    x.fillStyle = "#9aa79e"; x.font = "12px monospace";
+    x.fillText(new Date().toLocaleString(), 24, 452);
+    if (lat) x.fillText(`${lat.toFixed(5)}, ${lng?.toFixed(5)}`, 470, 452);
+    return c.toDataURL("image/jpeg", 0.82);
+  } catch {
+    return photoFallback(label);
+  }
+}
+
+/* Real camera photo capture: live viewfinder → shutter → frame grab with a
+   ZAROX HUD overlay (label, meter, timestamp, GPS). Falls back to a
+   simulated capture when no camera is available so the field flow never
+   dead-ends. */
+export function PhotoCapture({ label, meter, lat, lng, onCapture, onClose }: {
+  label: string; meter?: string; lat?: number; lng?: number;
+  onCapture: (dataUrl: string) => void; onClose: () => void;
+}) {
+  const [cam, setCam] = useState<"starting" | "live" | "error">("starting");
+  const [errMsg, setErrMsg] = useState("");
+  const [flashOn, setFlashOn] = useState(false);
+  const [bootKey, setBootKey] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw { name: "NoMediaDevices" };
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } },
+          audio: false,
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        const v = videoRef.current;
+        if (v) { v.srcObject = stream; await v.play().catch(() => { /* autoplay quirks — frames still render */ }); }
+        if (!cancelled) setCam("live");
+      } catch (e) {
+        if (cancelled) return;
+        const name = (e as { name?: string })?.name ?? "";
+        setCam("error");
+        setErrMsg(
+          name === "NotAllowedError" ? "Camera permission denied. Allow camera access and retry — or use simulated capture below."
+            : name === "NotFoundError" ? "No camera was found on this device. Use simulated capture below."
+            : name === "NotReadableError" ? "The camera is busy in another application. Close it and retry, or use simulated capture."
+            : "The camera could not be started. Use simulated capture below.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    };
+  }, [bootKey]);
+
+  const finish = (dataUrl: string) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setFlashOn(true);
+    setTimeout(() => onCapture(dataUrl), 330);
+  };
+
+  const shoot = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) return;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    const x = c.getContext("2d");
+    if (!x) { finish(snapPhoto(label, meter ?? "", lat, lng)); return; }
+    x.drawImage(v, 0, 0);
+    // HUD overlay -------------------------------------------------------
+    const bar = Math.max(44, Math.round(c.height * 0.09));
+    x.fillStyle = "rgba(10,14,11,0.62)";
+    x.fillRect(0, 0, c.width, bar); x.fillRect(0, c.height - bar, c.width, bar);
+    x.fillStyle = "#e89b2e";
+    x.font = `bold ${Math.round(bar * 0.42)}px monospace`;
+    x.fillText("ZAROX · " + label.toUpperCase(), 16, bar * 0.66);
+    x.fillStyle = "#e8e6da";
+    x.font = `${Math.round(bar * 0.3)}px monospace`;
+    const meta = [new Date().toLocaleString(), meter ? `MTR ${meter}` : "", lat ? `${lat.toFixed(5)}, ${lng?.toFixed(5)}` : ""].filter(Boolean).join("  ·  ");
+    x.fillText(meta, 16, c.height - bar * 0.34);
+    let out: string;
+    try { out = c.toDataURL("image/jpeg", 0.85); } catch { out = snapPhoto(label, meter ?? "", lat, lng); }
+    finish(out);
+  };
+
+  return (
+    <Modal open onClose={onClose} title={<span className="flex items-center gap-2"><Icon name="camera" size={16} className="text-volt2" />Capture · {label}</span>} wide>
+      <div className="space-y-3">
+        <div className="relative aspect-video overflow-hidden rounded-xl bg-side">
+          <video ref={videoRef} playsInline muted className={`absolute inset-0 h-full w-full object-cover ${cam === "live" ? "" : "opacity-0"}`} />
+          {cam === "live" && !flashOn && (
+            <div className="pointer-events-none absolute inset-0">
+              <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-volt" />
+              <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-volt" />
+              <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-volt" />
+              <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-volt" />
+              <span className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35" />
+              <span className="absolute left-1/2 top-1/2 h-1 w-5 -translate-x-1/2 -translate-y-1/2 bg-white/60" />
+              <span className="absolute left-1/2 top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 bg-white/60" />
+            </div>
+          )}
+          {cam === "live" && !flashOn && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 px-4 py-2.5">
+              <span className="h-2 w-2 rounded-full bg-danger recblink" />
+              <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#e8e6da]">LIVE · {label.toUpperCase()}{meter ? ` · MTR ${meter}` : ""}</p>
+            </div>
+          )}
+          {cam === "starting" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5">
+              <Icon name="camera" size={26} className="spin text-volt" />
+              <p className="font-mono text-[11px] font-bold tracking-[0.18em] text-[#93a29a]">REQUESTING CAMERA…</p>
+            </div>
+          )}
+          {cam === "error" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-dangersoft text-danger"><Icon name="alert" size={18} /></span>
+              <p className="max-w-sm text-[12.5px] font-semibold leading-snug text-[#c9d3cc]">{errMsg}</p>
+              <div className="flex gap-2">
+                <Btn size="sm" variant="outline" icon="camera" onClick={() => setBootKey(k => k + 1)}>Retry camera</Btn>
+                <Btn size="sm" variant="ok" icon="check" onClick={() => finish(snapPhoto(label, meter ?? "", lat, lng))}>Simulated capture</Btn>
+              </div>
+            </div>
+          )}
+          {flashOn && <div className="anim-fade absolute inset-0 z-10 flex items-center justify-center bg-white"><Icon name="check" size={30} className="text-ok" /></div>}
+        </div>
+        {cam === "live" && !flashOn && (
+          <div className="flex items-center justify-center gap-6">
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <button
+              onClick={shoot}
+              title="Take photo"
+              className="group flex h-16 w-16 items-center justify-center rounded-full border-4 border-ink bg-card transition-transform hover:scale-105 active:scale-90"
+            >
+              <span className="h-11 w-11 rounded-full bg-volt transition-all group-hover:bg-volt2 group-active:h-9 group-active:w-9" />
+            </button>
+            <span className="w-[72px] text-center font-mono text-[9.5px] font-bold tracking-wider text-mute">SHUTTER</span>
+          </div>
+        )}
+        {cam === "starting" && <p className="text-center text-[11px] font-semibold text-mute">Waiting for camera access…</p>}
+      </div>
+    </Modal>
+  );
+}
+
+/* ================= Timeline ================= */
 export function WorkflowTimeline({ op }: { op: Op }) {
   const stages = STAGES[op.type];
-  const done = op.status === "COMPLETED";
-  const rejected = op.status === "REJECTED";
-  const failed = op.status === "ZVEND_FAILED";
+  const idx = Math.min(op.stageIdx, stages.length - 1);
+  const done = TERMINAL.includes(op.status);
   return (
-    <ol className="relative space-y-0">
+    <div className="space-y-0">
       {stages.map((s, i) => {
-        const isDone = done || i < op.stageIdx || (rejected && i < op.stageIdx);
-        const isCurrent = !done && i === op.stageIdx && !rejected;
-        const isRejectPoint = rejected && i === op.stageIdx;
-        const isFailPoint = failed && s.key === "ZVEND";
-        const stageComments = op.comments.filter(c => c.stage === s.label);
+        const c = op.comments[i];
+        const state = i < idx || done ? "done" : i === idx ? (done ? "done" : "current") : "todo";
         return (
-          <li key={s.key} className="relative flex gap-3 pb-5 last:pb-0">
-            {i < stages.length - 1 && (
-              <span className={`absolute left-[13px] top-7 h-[calc(100%-20px)] w-px ${isDone ? "bg-ok/50" : "bg-line2"}`} />
-            )}
-            <span className={`z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-extrabold
-              ${isDone ? "border-ok bg-ok text-white" : isRejectPoint || isFailPoint ? "border-danger bg-danger text-white"
-                : isCurrent ? "border-volt bg-voltsoft text-volt2 livedot" : "border-line2 bg-card text-mute"}`}>
-              {isDone ? <Icon name="check" size={13} /> : isRejectPoint || isFailPoint ? <Icon name="x" size={13} /> : s.role === "ZVEND" ? <Icon name="plug" size={13} /> : i + 1}
+          <div key={s.key + i} className="relative flex gap-3 pb-4 last:pb-0">
+            {i < stages.length - 1 && <span className={`absolute left-[13px] top-7 h-[calc(100%-22px)] w-[2px] ${i < idx ? "bg-ok/50" : "bg-line"}`} />}
+            <span className={`z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 ${
+              state === "done" ? "border-ok bg-ok text-white" : state === "current" ? "border-volt bg-voltsoft text-volt2 livedot" : "border-line2 bg-paper text-mute"}`}>
+              {state === "done" ? <Icon name="check" size={12} /> : state === "current" ? <Icon name="clock" size={12} /> : <span className="text-[9.5px] font-extrabold tnum">{i + 1}</span>}
             </span>
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex flex-wrap items-center gap-2">
-                <p className={`text-[13px] font-bold ${isCurrent ? "text-ink" : isDone ? "text-ink2" : "text-mute"}`}>{s.label}</p>
-                <span className="text-[10px] font-extrabold tracking-wider text-mute/70">
-                  {s.role === "ZVEND" ? "ZVEND API" : ROLE_LABEL[s.role as keyof typeof ROLE_LABEL]?.toUpperCase()}
-                </span>
-                {isCurrent && <TonePill tone={failed && s.key === "ZVEND" ? "red" : "amber"}>{failed && s.key === "ZVEND" ? "FAILED" : "AWAITING"}</TonePill>}
-                {op.status === "RETURNED" && isCurrent && <TonePill tone="orange">RETURNED HERE</TonePill>}
+                <p className={`text-[12.5px] font-extrabold ${state === "todo" ? "text-mute" : ""}`}>{s.label}</p>
+                {s.role === "ZVEND" && <TonePill tone="blue">API</TonePill>}
+                {c?.decision && <TonePill tone={c.decision === "reject" ? "red" : c.decision === "return" ? "amber" : "green"}>{c.decision.toUpperCase()}</TonePill>}
               </div>
-              {stageComments.length > 0 && (
-                <div className="mt-1.5 space-y-1">
-                  {stageComments.slice(-2).map(c => (
-                    <p key={c.id} className="rounded-md bg-paper px-2.5 py-1.5 text-[11.5px] leading-snug text-ink2">
-                      <span className="font-bold text-ink">{c.userName}</span>
-                      <span className="mx-1 text-[9.5px] font-extrabold text-volt2">{c.decision}</span>
-                      {c.text.length > 120 ? c.text.slice(0, 120) + "…" : c.text}
-                    </p>
-                  ))}
-                </div>
-              )}
+              {c && <p className="mt-0.5 truncate text-[11.5px] text-mute" title={c.text}>“{c.text}” — {c.userName}</p>}
+              {c && <p className="font-mono text-[9.5px] text-mute/70">{fmtDT(c.at)}</p>}
             </div>
-          </li>
+          </div>
         );
       })}
-    </ol>
+    </div>
   );
 }
 
-// ============================================================
-// Comments (append-only)
-// ============================================================
+/* ================= Comments ================= */
 export function CommentThread({ op }: { op: Op }) {
-  const list = [...op.comments].reverse();
   return (
-    <div className="space-y-2.5">
-      {list.map(c => (
-        <div key={c.id} className="rounded-lg border border-line bg-card p-3">
+    <div className="divide-y divide-line/70">
+      {op.comments.length === 0 && <p className="py-5 text-center text-[12px] text-mute">No comments yet — every workflow decision appends an immutable comment.</p>}
+      {op.comments.map(c => (
+        <div key={c.id} className="px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[12.5px] font-extrabold">{c.userName}</span>
-            <span className="rounded bg-ink/6 px-1.5 py-px text-[9.5px] font-extrabold tracking-wider text-ink2">{c.role === "SYSTEM" ? "SYSTEM" : ROLE_LABEL[c.role as keyof typeof ROLE_LABEL]?.toUpperCase()}</span>
-            <TonePill tone={c.decision === "REJECT" ? "red" : c.decision === "RETURN" ? "orange" : c.decision === "APPROVE" ? "green" : c.decision === "SYSTEM" ? "blue" : "gray"}>{c.decision}</TonePill>
-            {c.delegated && <TonePill tone="amber">MD DELEGATION</TonePill>}
-            <span className="ml-auto text-[10.5px] text-mute" title={fmtDT(c.at)}>{fmtTime(c.at)} · {new Date(c.at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span>
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[9px] font-extrabold text-volt">{c.userName.split(" ").map(w => w[0]).join("").slice(0, 2)}</span>
+            <p className="text-[12.5px] font-extrabold">{c.userName}</p>
+            <TonePill tone="gray">{ROLE_LABEL[c.role].toUpperCase()}</TonePill>
+            {c.decision && <TonePill tone={c.decision === "reject" ? "red" : c.decision === "return" ? "amber" : "green"}>{c.decision.toUpperCase()}</TonePill>}
+            <span className="ml-auto font-mono text-[9.5px] text-mute">{fmtDT(c.at)}</span>
           </div>
-          <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink2">{c.text}</p>
-          <p className="mt-1 text-[10px] font-bold tracking-wide text-mute/70">STAGE: {c.stage.toUpperCase()}</p>
+          <p className="mt-1.5 rounded-lg bg-paper px-3 py-2 text-[12.5px] leading-relaxed">{c.text}</p>
         </div>
       ))}
-      {list.length === 0 && <p className="py-4 text-center text-[12px] text-mute">No comments yet.</p>}
     </div>
   );
 }
 
-// ============================================================
-// Decision panel (approve / reject / return)
-// ============================================================
-export function DecisionPanel({ op }: { op: Op }) {
-  const { user, can, decide, delegation } = useStore();
+/* ================= Approval panel ================= */
+export function ApprovalPanel({ op }: { op: Op }) {
+  const { user, decide, delegation } = useStore();
   const [comment, setComment] = useState("");
-  const [confirming, setConfirming] = useState<null | "REJECT" | "RETURN">(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
   if (!user) return null;
-  const actor = actionableBy(op, !!delegation);
-  if (actor !== user.role || !can(`${op.type}.approve`)) return null;
-  const delegated = op.status === "PENDING_MD" && user.role === "GENERAL_MANAGER";
-  const stage = STAGES[op.type][op.stageIdx];
-
-  return (
-    <div className="rounded-xl border-2 border-volt/50 bg-voltsoft/50 p-4">
-      <div className="mb-2.5 flex items-center gap-2">
-        <Icon name="approve" size={16} className="text-volt2" />
-        <p className="font-display text-[14px] font-bold">{stage.label} — your decision</p>
-      </div>
-      {delegated && (
-        <p className="mb-2.5 rounded-md border border-[#eed9b4] bg-voltsoft px-2.5 py-1.5 text-[11.5px] font-bold text-volt2">
-          You are acting at the MD stage under an active MD delegation. The decision will be marked “Approved under MD delegation.”
-        </p>
-      )}
-      <Field label={`${ROLE_LABEL[user.role]} comment (required)`}>
-        <Textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="Record your review note — comments are append-only and never overwritten." />
-      </Field>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Btn variant="ok" icon="check" disabled={!comment.trim()} onClick={() => decide(op.id, "APPROVE", comment) && setComment("")}>Approve</Btn>
-        <Btn variant="outline" icon="chevL" disabled={!comment.trim()} onClick={() => setConfirming("RETURN")}>Return</Btn>
-        <Btn variant="danger" icon="x" disabled={!comment.trim()} onClick={() => setConfirming("REJECT")}>Reject</Btn>
-      </div>
-      <Modal open={!!confirming} onClose={() => setConfirming(null)} title={`Confirm ${confirming?.toLowerCase()}`}>
-        <p className="text-[13px] text-ink2">
-          You are about to <b>{confirming?.toLowerCase()}</b> <span className="font-mono font-bold">{op.txn}</span>.
-          {confirming === "REJECT" ? " The record will be closed as REJECTED and the initiator notified." : " The record returns to the previous stage for revision. Previous comments are preserved."}
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <Btn variant="ghost" onClick={() => setConfirming(null)}>Cancel</Btn>
-          <Btn variant={confirming === "REJECT" ? "danger" : "primary"} onClick={() => { if (confirming) decide(op.id, confirming, comment); setConfirming(null); setComment(""); }}>
-            Confirm {confirming?.toLowerCase()}
-          </Btn>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-// ============================================================
-// Barcode scan block
-// ============================================================
-export function ScanBlock({ op }: { op: Op }) {
-  const { state, saveScan } = useStore();
-  const [mode, setMode] = useState<"idle" | "scanning">(op.scan?.matched ? "idle" : "idle");
-  const [manual, setManual] = useState("");
-  const [lastMismatch, setLastMismatch] = useState(op.scan && !op.scan.matched);
-  const done = op.scan?.matched === true;
-
-  const attempt = (value: string) => {
-    const v = value.trim();
-    if (!/^\d+$/.test(v)) { saveScan(op.id, { value: v || "—", matched: false, at: Date.now() }); setLastMismatch(true); return; }
-    const matched = v === op.meterNumber;
-    saveScan(op.id, { value: v, matched, at: Date.now() });
-    setMode("idle");
-    setLastMismatch(!matched);
+  const owner = actionableBy(op, delegation);
+  if (owner !== user.role) return null;
+  const stage = STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)];
+  const isApprover = ["ENERGY_MANAGER", "GENERAL_MANAGER", "MD", "SECRETARY"].includes(owner) && stage.key !== "INITIATOR" && stage.key !== "DELIVERY" && stage.key !== "EXECUTION";
+  /* Field stages submit exclusively through their gated evidence chains —
+     no generic confirm shortcuts. */
+  if (op.type === "inspection" && stage.key === "EXECUTION") return null;
+  if (op.type === "activation" && stage.key === "INITIATOR") return null;
+  if (op.type === "control" && stage.key === "INITIATOR") return null;
+  if (op.type === "wallet" && stage.key === "INITIATOR") return null;
+  const run = (d: Parameters<typeof decide>[1]) => {
+    setErr(""); setBusy(d);
+    setTimeout(() => { const e = decide(op.id, d, comment); if (e) setErr(e); else setComment(""); setBusy(null); }, 350);
   };
-
-  if (done) {
-    return (
-      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3.5">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white"><Icon name="check" size={15} /></span>
-          <div>
-            <p className="font-display text-[13.5px] font-bold text-ok">METER VERIFIED</p>
-            <p className="font-mono text-[11.5px] text-ink2">scanned {op.scan!.value} · {fmtTime(op.scan!.at)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  const label = stage.key === "DELIVERY" ? (op.type === "installation" ? "Make available to Technical Man" : "Confirm completion") : stage.key === "EXECUTION" ? "Confirm execution complete" : "Confirm delivery";
   return (
-    <div className="space-y-3">
-      <div className="relative overflow-hidden rounded-xl border-2 border-ink bg-side aspect-[16/9]">
-        <div className="bg-circuit absolute inset-0" />
-        {/* frame corners */}
-        <div className="absolute left-6 right-6 top-6 bottom-6">
-          <span className="absolute left-0 top-0 h-6 w-6 rounded-tl-lg border-l-[3px] border-t-[3px] border-volt" />
-          <span className="absolute right-0 top-0 h-6 w-6 rounded-tr-lg border-r-[3px] border-t-[3px] border-volt" />
-          <span className="absolute bottom-0 left-0 h-6 w-6 rounded-bl-lg border-b-[3px] border-l-[3px] border-volt" />
-          <span className="absolute bottom-0 right-0 h-6 w-6 rounded-br-lg border-b-[3px] border-r-[3px] border-volt" />
-          {mode === "scanning" && <span className="scanline absolute left-2 right-2 h-[2px] rounded bg-volt shadow-[0_0_14px_#e89b2e]" />}
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <Icon name="scan" size={34} className={mode === "scanning" ? "text-volt" : "text-[#5d6b62]"} />
-            <p className="font-mono text-[11px] font-bold tracking-widest text-[#93a29a]">
-              {mode === "scanning" ? "SCANNING…" : "BARCODE SCANNER READY"}
-            </p>
-          </div>
-        </div>
-        <p className="absolute bottom-2 left-3 font-mono text-[9.5px] text-[#5d6b62]">MediaDevices bridge · simulated viewport</p>
-      </div>
-      {lastMismatch && (
-        <div className="rounded-lg border-2 border-danger bg-dangersoft p-3.5 anim-rise">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white"><Icon name="alert" size={15} /></span>
-            <div>
-              <p className="font-display text-[13.5px] font-bold text-danger">METER NUMBER MISMATCH</p>
-              <p className="text-[11.5px] text-ink2">Scanned value does not match the authorized meter. Operation is stopped — re-scan the correct meter.</p>
-            </div>
-          </div>
-        </div>
-      )}
-      <div className="flex flex-wrap gap-2">
-        <Btn variant="primary" icon="scan" loading={mode === "scanning"} onClick={() => { setMode("scanning"); setTimeout(() => attempt(op.meterNumber), 1300); }}>
-          Scan meter barcode
-        </Btn>
-        <Btn variant="outline" icon="alert" onClick={() => {
-          const wrong = state.meters.find(m => m.number !== op.meterNumber)?.number ?? "99999999999";
-          setMode("scanning"); setTimeout(() => attempt(wrong), 1300);
-        }}>Simulate wrong meter</Btn>
-      </div>
-      <div className="flex gap-2">
-        <TextInput value={manual} onChange={e => setManual(e.target.value.replace(/\D/g, ""))} placeholder="…or key meter number manually" className="font-mono" />
-        <Btn variant="outline" disabled={!manual} onClick={() => attempt(manual)}>Capture</Btn>
+    <div className="rounded-xl border-2 border-volt/60 bg-voltsoft/60 p-4 anim-rise">
+      <p className="flex items-center gap-2 font-display text-[13.5px] font-bold text-volt2"><Icon name="approve" size={15} /> Awaiting your action · {stage.label}{delegation && stage.role === "MD" ? " (MD delegation)" : ""}</p>
+      <Textarea value={comment} onChange={e => setComment(e.target.value)} placeholder={`Your ${owner === "TECHNICAL_MAN" ? "execution note" : "comment"} — required, append-only…`} className="mt-2.5 bg-card" />
+      {err && <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {isApprover ? (
+          <>
+            <Btn variant="ok" icon="check" loading={busy === "approve"} onClick={() => run("approve")}>Approve</Btn>
+            <Btn variant="danger" icon="x" loading={busy === "reject"} onClick={() => run("reject")}>Reject</Btn>
+            <Btn variant="outline" icon="chevL" loading={busy === "return"} onClick={() => run("return")}>Return</Btn>
+          </>
+        ) : (
+          <Btn variant="volt" icon="arrowR" loading={busy === "deliver" || busy === "execute" || busy === "confirm"} onClick={() => run(stage.key === "EXECUTION" ? "execute" : stage.key === "DELIVERY" ? (op.type === "installation" ? "deliver" : "confirm") : "confirm")}>{label}</Btn>
+        )}
       </div>
     </div>
   );
 }
 
-// ============================================================
-// GPS block
-// ============================================================
+/* ================= ZVend panel + secure codes ================= */
+export function CodeMask({ code, opId, kind }: { code?: string; opId: string; kind: string }) {
+  const { auditCode, toast } = useStore();
+  const [shown, setShown] = useState(false);
+  if (!code) return <span className="text-[11.5px] font-semibold text-mute">Not issued</span>;
+  const masked = "•••• •••• •••• •••• ••••";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono text-[13px] font-bold tracking-wide">{shown ? code.replace(/(.{4})/g, "$1 ").trim() : masked}</span>
+      <button className="rounded-md border border-line2 bg-card p-1.5 text-mute transition-colors hover:text-ink" title={shown ? "Hide" : "Reveal (audited)"}
+        onClick={() => { setShown(v => !v); if (!shown) auditCode(opId, `${kind}_code_reveal`); }}>
+        <Icon name={shown ? "eyeoff" : "eye"} size={13} />
+      </button>
+      <button className="rounded-md border border-line2 bg-card p-1.5 text-mute transition-colors hover:text-ink" title="Copy (audited)"
+        onClick={() => { copyText(code).then(() => { toast(`${kind === "tamper" ? "Tamper" : "Clear"} code copied`, "info"); auditCode(opId, `${kind}_code_copy`); }); }}>
+        <Icon name="copy" size={13} />
+      </button>
+    </div>
+  );
+}
+
+export function ZVendPanel({ op }: { op: Op }) {
+  const z = op.zvend;
+  if (op.type === "inspection") return <p className="rounded-lg border border-line bg-paper px-3 py-2.5 text-[11.5px] font-bold text-mute"><Icon name="info" size={12} className="mr-1.5 inline" />Inspections never call ZVend — the chain is fully internal.</p>;
+  if (!z) return (
+    <div className="rounded-lg border border-dashed border-line2 bg-paper/60 px-3 py-3 text-[11.5px] font-semibold text-mute">
+      ZVend call is queued automatically after MD final approval. Idempotency key: <span className="font-mono font-bold">zvend:{op.txn}:1</span>
+    </div>
+  );
+  return (
+    <div className={`rounded-xl border p-4 ${z.status === "success" ? "border-[#c2ddcd] bg-oksoft/50" : "border-[#eac5be] bg-dangersoft/50"}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusPill status={z.status === "success" ? "ZVEND_SUCCESS" : "ZVEND_FAILED"} />
+        <span className="font-mono text-[11px] font-bold text-mute">ref {z.ref} · code {z.responseCode} · {z.latencyMs} ms · {fmtDT(z.at)}</span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {z.tamper && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-card px-3 py-2"><span className="text-[10.5px] font-extrabold tracking-widest text-mute">TAMPER CODE</span><CodeMask code={z.tamper} opId={op.id} kind="tamper" /></div>}
+        {z.clear && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-card px-3 py-2"><span className="text-[10.5px] font-extrabold tracking-widest text-mute">CLEAR CODE</span><CodeMask code={z.clear} opId={op.id} kind="clear" /></div>}
+      </div>
+      <p className="mt-2.5 text-[10px] font-bold text-mute">Payload and response are stored sanitized in API Logs — codes never appear in logs.</p>
+    </div>
+  );
+}
+
+/* ================= Field blocks ================= */
+export function ScanBlock({ op, onVerified }: { op: Op; onVerified?: () => void }) {
+  const { saveScan } = useStore();
+  const [open, setOpen] = useState(false);
+  const done = op.scan?.matched === true;
+  if (done) return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-[#c2ddcd] bg-oksoft p-3">
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white"><Icon name="check" size={15} /></span>
+      <div><p className="font-display text-[13px] font-bold text-ok">METER VERIFIED</p><p className="font-mono text-[11px] text-ink2">{op.scan!.value} · {fmtDT(op.scan!.at)}</p></div>
+    </div>
+  );
+  return (
+    <div className="space-y-2.5">
+      {op.scan && !op.scan.matched && (
+        <div className="flex items-center gap-2.5 rounded-lg border-2 border-danger bg-dangersoft p-3 anim-rise">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white"><Icon name="alert" size={15} /></span>
+          <div><p className="font-display text-[13px] font-bold text-danger">METER NUMBER MISMATCH</p><p className="text-[11px] text-ink2">Read “{op.scan.value}” ≠ {op.meterNumber}. Operation stopped — re-scan.</p></div>
+        </div>
+      )}
+      <Btn variant="primary" icon="camera" onClick={() => setOpen(true)}>Scan meter barcode</Btn>
+      {open && (
+        <BarcodeScanner
+          title="Scan meter barcode"
+          hint={`The read is compared against authorized meter ${op.meterNumber}. A mismatch stops the operation.`}
+          onClose={() => setOpen(false)}
+          onDetect={code => {
+            setOpen(false);
+            const v = code.replace(/\D/g, "");
+            const matched = !!v && (v === op.meterNumber || v.includes(op.meterNumber) || op.meterNumber.includes(v));
+            saveScan(op.id, { value: v || code, matched, at: Date.now() });
+            if (matched) onVerified?.();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function GpsBlock({ op }: { op: Op }) {
   const { state, saveGps } = useStore();
   const [busy, setBusy] = useState(false);
-  const fac = state.facilities.find(f => f.id === op.facilityId);
   const max = state.settings.maxGpsAccuracyM;
-  const gps = op.gps;
-
-  const capture = () => {
-    setBusy(true);
-    const finish = (lat: number, lng: number, accuracy: number, source: "device" | "simulated") => {
-      saveGps(op.id, { lat: +lat.toFixed(6), lng: +lng.toFixed(6), accuracy: Math.round(accuracy), at: Date.now(), source, accepted: accuracy <= max });
-      setBusy(false);
-    };
-    let settled = false;
-    try {
-      navigator.geolocation.getCurrentPosition(
-        p => { if (!settled) { settled = true; finish(p.coords.latitude, p.coords.longitude, p.coords.accuracy, "device"); } },
-        () => { if (!settled) { settled = true; finish((fac?.lat ?? 6.45) + (Math.random() - 0.5) * 0.0016, (fac?.lng ?? 3.55) + (Math.random() - 0.5) * 0.0016, 5 + Math.random() * 22, "simulated"); } },
-        { timeout: 3500, maximumAge: 10000 },
-      );
-    } catch { /* geo unavailable */ }
-    setTimeout(() => { if (!settled) { settled = true; finish((fac?.lat ?? 6.45) + (Math.random() - 0.5) * 0.0016, (fac?.lng ?? 3.55) + (Math.random() - 0.5) * 0.0016, 5 + Math.random() * 22, "simulated"); } }, 4200);
-  };
-
-  if (gps && gps.accepted) {
-    return (
-      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3.5">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white"><Icon name="pin" size={15} /></span>
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-[13.5px] font-bold text-ok">GPS CAPTURED — WITHIN LIMIT</p>
-            <p className="font-mono text-[11.5px] text-ink2">{gps.lat}, {gps.lng} · ±{gps.accuracy} m · {gps.source} · {fmtTime(gps.at)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  const fac = state.facilities.find(f => f.id === op.facilityId);
+  if (op.gps?.accepted) return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-[#c2ddcd] bg-oksoft p-3">
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white"><Icon name="pin" size={15} /></span>
+      <div><p className="font-mono text-[12.5px] font-bold text-ok">{op.gps.lat}, {op.gps.lng}</p><p className="text-[10.5px] font-bold text-mute">±{op.gps.accuracy} m · within ±{max} m ceiling · {fmtDT(op.gps.at)}</p></div>
+    </div>
+  );
   return (
-    <div className="space-y-3">
-      {gps && !gps.accepted && (
-        <div className="rounded-lg border-2 border-danger bg-dangersoft p-3.5 anim-rise">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white"><Icon name="alert" size={15} /></span>
-            <div>
-              <p className="font-display text-[13.5px] font-bold text-danger">GPS ACCURACY EXCEEDED — OPERATION BLOCKED</p>
-              <p className="text-[11.5px] text-ink2">±{gps.accuracy} m is beyond the allowed ±{max} m. The event was recorded as suspicious GPS. Move to open sky and retry — completion is disabled.</p>
-            </div>
-          </div>
-        </div>
-      )}
-      <div className="flex items-center gap-3 rounded-xl border border-line bg-side p-4">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-full ${busy ? "bg-volt/20 text-volt" : "bg-side3 text-[#93a29a]"}`}>
-          <Icon name="pin" size={18} className={busy ? "recblink" : ""} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold text-paper">{busy ? "Acquiring satellites…" : gps ? "GPS rejected — retry required" : "Capture installation GPS"}</p>
-          <p className="text-[11px] text-[#71816f]">Geolocation API · threshold ±{max} m · near {fac?.name ?? "facility"}</p>
-        </div>
-      </div>
-      <Btn variant="primary" icon="pin" size="lg" loading={busy} onClick={capture} className="w-full sm:w-auto">
-        {gps ? "Retry GPS capture" : "Capture GPS"}
-      </Btn>
+    <div className="space-y-2.5">
+      {op.gps && !op.gps.accepted && <p className="flex items-center gap-2 rounded-lg border border-[#eac5be] bg-dangersoft px-3 py-2 text-[11.5px] font-extrabold text-danger anim-rise"><Icon name="alert" size={13} /> GPS ±{op.gps.accuracy} m exceeded ±{max} m — capture rejected, completion blocked.</p>}
+      <Btn variant="primary" icon="pin" loading={busy} onClick={() => {
+        setBusy(true);
+        setTimeout(() => {
+          const acc = Math.round(6 + Math.random() * 22);
+          saveGps(op.id, { lat: +((fac?.lat ?? 6.45) + (Math.random() - 0.5) * 0.0016).toFixed(6), lng: +((fac?.lng ?? 3.55) + (Math.random() - 0.5) * 0.0016).toFixed(6), accuracy: acc, at: Date.now(), accepted: acc <= max });
+          setBusy(false);
+        }, 1400);
+      }}>Capture GPS</Btn>
     </div>
   );
 }
 
-// ============================================================
-// Photos block
-// ============================================================
-export function PhotosBlock({ op, labels }: { op: Op; labels: string[] }) {
+export function PhotoBlock({ op, labels }: { op: Op; labels: string[] }) {
   const { addPhoto } = useStore();
-  const [shooting, setShooting] = useState<string | null>(null);
   return (
-    <div className="grid grid-cols-2 gap-2.5">
-      {labels.map(label => {
-        const photo = op.photos.find(p => p.label === label);
-        return (
-          <div key={label} className="overflow-hidden rounded-lg border border-line bg-card">
-            {photo ? (
-              <>
-                <img src={photo.dataUrl} alt={label} className="aspect-[4/3] w-full object-cover" />
-                <div className="flex items-center gap-1.5 px-2 py-1.5">
-                  <Icon name="check" size={12} className="text-ok" />
-                  <p className="min-w-0 flex-1 truncate text-[10.5px] font-extrabold">{label}</p>
-                  <span className="font-mono text-[9px] text-mute">{fmtTime(photo.at)}</span>
-                </div>
-              </>
-            ) : (
-              <button onClick={() => { setShooting(label); setTimeout(() => { addPhoto(op.id, { id: Math.random().toString(36).slice(2), label, dataUrl: snapPhoto(label, op.meterNumber, op.gps?.lat, op.gps?.lng), at: Date.now(), lat: op.gps?.lat, lng: op.gps?.lng }); setShooting(null); }, 850); }}
-                className="group flex aspect-[4/3] w-full flex-col items-center justify-center gap-1.5 bg-paper transition-colors hover:bg-voltsoft">
-                {shooting === label
-                  ? <><span className="recblink flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white"><Icon name="camera" size={15} /></span><p className="text-[10.5px] font-extrabold text-danger">CAPTURING…</p></>
-                  : <><span className="flex h-8 w-8 items-center justify-center rounded-full bg-ink/8 text-mute group-hover:bg-volt group-hover:text-ink"><Icon name="camera" size={15} /></span><p className="px-1 text-[10.5px] font-extrabold text-ink2">{label}</p></>}
-              </button>
-            )}
-          </div>
-        );
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+      {labels.map(l => {
+        const p = op.photos.find(x => x.label === l);
+        return p
+          ? <img key={l} src={p.dataUrl} alt={l} className="aspect-[4/3] w-full rounded-lg border border-line object-cover" />
+          : <button key={l} onClick={() => addPhoto(op.id, { id: Math.random().toString(36).slice(2), label: l, dataUrl: snapPhoto(l, op.meterNumber, op.gps?.lat, op.gps?.lng), at: Date.now(), lat: op.gps?.lat, lng: op.gps?.lng })}
+            className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-colors hover:border-volt hover:bg-voltsoft">
+            <Icon name="camera" size={16} className="text-mute" /><span className="px-1 text-center text-[9.5px] font-extrabold text-ink2">{l}</span>
+          </button>;
       })}
     </div>
   );
 }
 
-// ============================================================
-// Video recorder (inspection)
-// ============================================================
-const videoBlobs: Record<string, string> = {};
-export const getVideoBlob = (opId: string) => videoBlobs[opId];
-
-export function VideoBlock({ op, durationSec }: { op: Op; durationSec: number }) {
-  const { saveVideo } = useStore();
-  const [phase, setPhase] = useState<"idle" | "rec" | "done">(op.video ? "done" : "idle");
-  const [left, setLeft] = useState(durationSec);
-  const [fast, setFast] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+/* Real-camera inspection recorder: viewfinder (live MediaStream) → RECORDING
+   with mm:ss countdown that auto-stops at zero → review clip + observations.
+   `autoSubmit` advances the workflow (execute decision) once saved. */
+export function VideoBlock({ op, autoSubmit = false }: { op: Op; autoSubmit?: boolean }) {
+  const { saveVideo, decide, toast } = useStore();
+  const [phase, setPhase] = useState<"idle" | "viewfinder" | "rec" | "review">("idle");
+  const [left, setLeft] = useState(op.durationSec ?? 120);
+  const [obs, setObs] = useState(op.observations ?? "");
+  const [url, setUrl] = useState<string | null>(null);
+  const [camErr, setCamErr] = useState("");
+  const [simulated, setSimulated] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scanOk = op.scan?.matched === true;
+  const gpsOk = op.gps?.accepted === true;
   const recRef = useRef<MediaRecorder | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunks = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const urlRef = useRef<string | null>(null);
+  const dur = op.durationSec ?? 120;
+  const mm = String(Math.floor(left / 60)).padStart(2, "0");
+  const ss = String(left % 60).padStart(2, "0");
 
+  const stopStream = () => { streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; };
   useEffect(() => () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    if (recRef.current && recRef.current.state !== "inactive") try { recRef.current.stop(); } catch { /* noop */ }
+    try { if (recRef.current && recRef.current.state === "recording") recRef.current.stop(); } catch { /* noop */ }
+    stopStream();
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
   }, []);
 
-  const start = async () => {
-    setPhase("rec"); setLeft(durationSec);
-    let simulated = true;
+  /* Countdown — auto-stops the recorder at zero. */
+  useEffect(() => {
+    if (phase !== "rec") return;
+    if (left <= 0) {
+      try { if (recRef.current && recRef.current.state === "recording") recRef.current.stop(); } catch { /* noop */ }
+      if (simulated) { stopStream(); setPhase("review"); }
+      return;
+    }
+    const t = setTimeout(() => setLeft(l => l - 1), 1000);
+    return () => clearTimeout(t);
+  }, [phase, left, simulated]);
+
+  const openViewfinder = async () => {
+    setCamErr("");
+    if (!navigator.mediaDevices?.getUserMedia) { setCamErr("This browser does not expose a camera. Use the simulated capture below."); setPhase("viewfinder"); return; }
+    setPhase("viewfinder");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => undefined); }
-      const chunks: Blob[] = [];
-      const rec = new MediaRecorder(stream);
-      recRef.current = rec;
-      rec.ondataavailable = e => chunks.push(e.data);
-      rec.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
-        if (blob.size > 0) { videoBlobs[op.id] = URL.createObjectURL(blob); simulated = false; saveVideo(op.id, { durationSec, at: Date.now(), simulated: false, sizeKB: Math.max(1, Math.round(blob.size / 1024)) }); }
-      };
-      rec.start();
-    } catch { /* camera unavailable — simulated recording persists metadata */ }
-    const tick = () => {
-      setLeft(l => {
-        const step = fast ? 6 : 1;
-        const nl = l - step;
-        if (nl <= 0) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          if (recRef.current && recRef.current.state !== "inactive") try { recRef.current.stop(); } catch { /* noop */ }
-          streamRef.current?.getTracks().forEach(t => t.stop());
-          setPhase("done");
-          saveVideo(op.id, { durationSec, at: Date.now(), simulated, sizeKB: Math.round(durationSec * 152) });
-          return 0;
-        }
-        return nl;
-      });
-    };
-    timerRef.current = setInterval(tick, 1000);
+    } catch (e) {
+      const name = (e as { name?: string })?.name ?? "";
+      setCamErr(
+        name === "NotAllowedError" ? "Camera permission denied. Allow camera access and retry — or use the simulated capture."
+          : name === "NotFoundError" ? "No camera found on this device. Use the simulated capture."
+          : name === "NotReadableError" ? "The camera is busy in another app. Close it and retry, or use the simulated capture."
+          : "The camera could not be started. Use the simulated capture.");
+    }
   };
 
-  if (phase === "done" && op.video) {
-    return (
-      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3.5">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white"><Icon name="video" size={15} /></span>
-          <div>
-            <p className="font-display text-[13.5px] font-bold text-ok">INSPECTION VIDEO SAVED</p>
-            <p className="font-mono text-[11.5px] text-ink2">{mmss(op.video.durationSec)} · {(op.video.sizeKB / 1024).toFixed(1)} MB · {op.video.simulated ? "metadata-only capture" : "device capture"} · {fmtTime(op.video.at)}</p>
-          </div>
-        </div>
+  const beginRecording = () => {
+    setSimulated(false); chunks.current = []; setLeft(dur);
+    const stream = streamRef.current;
+    const hasRecorder = typeof MediaRecorder !== "undefined" && !!stream && stream.getVideoTracks().length > 0;
+    if (hasRecorder) {
+      const rec = new MediaRecorder(stream!);
+      recRef.current = rec;
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.current.push(e.data); };
+      rec.onstop = () => {
+        const blob = new Blob(chunks.current, { type: rec.mimeType || "video/webm" });
+        const u = URL.createObjectURL(blob);
+        urlRef.current = u; setUrl(u);
+        stopStream();
+        if (videoRef.current) videoRef.current.srcObject = null;
+        setPhase("review");
+      };
+      rec.start(250);
+    } else {
+      setSimulated(true);
+      toast("MediaRecorder unavailable — running a simulated capture.", "warn");
+    }
+    setPhase("rec");
+  };
+
+  const save = () => {
+    saveVideo(op.id, { url: url ?? "sim", durationSec: dur, at: Date.now() }, obs.trim());
+    if (autoSubmit) {
+      const e = decide(op.id, "execute", obs.trim() || "Inspection recording submitted.");
+      if (e) toast(e, "danger");
+      else toast("Submitted for Secretary review.", "ok");
+    } else {
+      toast("Video saved.", "ok");
+    }
+  };
+  /* Gated submit — barcode, GPS and a recorded video are all mandatory. */
+  const finish = async () => {
+    setErr("");
+    if (!scanOk) { setErr("Submission blocked — barcode verification must be completed first."); return; }
+    if (!gpsOk) { setErr("Submission blocked — GPS capture is required first."); return; }
+    if (phase !== "review") { setErr("Submission blocked — record the inspection video first."); return; }
+    if (obs.trim().length < 5) { setErr("Observations require at least 5 characters."); return; }
+    setBusy(true);
+    await new Promise(r => setTimeout(r, 350));
+    save();
+    setBusy(false);
+  };
+
+  if (op.video && op.observations && phase === "idle") return (
+    <div className="space-y-2.5">
+      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3 anim-fade">
+        <p className="flex items-center gap-2 font-display text-[13px] font-bold text-ok"><Icon name="video" size={15} /> VIDEO CAPTURED · {op.video.durationSec}s</p>
+        <p className="mt-1 text-[11.5px] text-ink2">Observations: {op.observations}</p>
       </div>
-    );
-  }
+      <div className="flex flex-wrap gap-2">
+        <Btn variant="ok" icon="check" loading={busy} onClick={() => void finish()}>Submit for review</Btn>
+        <Btn variant="outline" icon="video" onClick={() => setPhase("viewfinder")}>Re-record video</Btn>
+      </div>
+      {err && <p className="flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
+    </div>
+  );
 
   return (
-    <div className="space-y-3">
-      <div className="relative overflow-hidden rounded-xl border-2 border-ink bg-side aspect-video">
-        <video ref={videoRef} muted playsInline className={`absolute inset-0 h-full w-full object-cover ${phase === "rec" ? "" : "opacity-0"}`} />
-        {phase !== "rec" && <div className="bg-circuit absolute inset-0 flex flex-col items-center justify-center gap-2">
-          <Icon name="video" size={32} className="text-[#5d6b62]" />
-          <p className="font-mono text-[11px] font-bold tracking-widest text-[#93a29a]">RECORDER ARMED · {mmss(durationSec)}</p>
-        </div>}
-        {phase === "rec" && <>
-          <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-md bg-danger px-2 py-1 text-[11px] font-extrabold text-white">
-            <span className="recblink h-2 w-2 rounded-full bg-white" /> RECORDING
-          </span>
-          <span className="absolute right-3 top-3 rounded-md bg-ink/80 px-2.5 py-1 font-mono text-[17px] font-bold text-volt tnum">{mmss(left)}</span>
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-ink/60">
-            <div className="h-full bg-volt transition-all duration-1000 ease-linear" style={{ width: `${((durationSec - left) / durationSec) * 100}%` }} />
-          </div>
-        </>}
-      </div>
+    <div className="space-y-2.5">
       {phase === "idle" && (
-        <div className="flex flex-wrap items-center gap-3">
-          <Btn variant="danger" icon="video" size="lg" onClick={start}>Start recording</Btn>
-          <label className="flex cursor-pointer items-center gap-2 text-[12px] font-bold text-ink2">
-            <input type="checkbox" checked={fast} onChange={e => setFast(e.target.checked)} className="h-4 w-4 accent-[#e89b2e]" />
-            Demo fast-forward (×6)
-          </label>
-          <p className="text-[11px] text-mute">Recording auto-stops at 00:00 and cannot be submitted short.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// ZVend panel
-// ============================================================
-export function ZVendPanel({ op }: { op: Op }) {
-  const { retryZVend, user, audit } = useStore();
-  const z = op.zvend;
-  const kind = op.type === "installation" ? "tamper + clear codes" : op.type === "activation" ? "activation reference" : `${op.type} code`;
-  return (
-    <div className={`rounded-xl border p-4 ${z?.status === "failed" ? "border-danger/50 bg-dangersoft/50" : z?.status === "success" ? "border-[#c3d7e3] bg-infosoft/40" : "border-line bg-card"}`}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Icon name="plug" size={16} className={z?.status === "success" ? "text-info" : z?.status === "failed" ? "text-danger" : "text-volt2"} />
-        <p className="font-display text-[14px] font-bold">ZVend Integration</p>
-        <StatusPill status={op.status} pulse={op.status === "WAITING_ZVEND"} />
-      </div>
-
-      {op.status === "WAITING_ZVEND" && (
-        <div className="rounded-lg border border-line bg-paper p-3.5">
-          <svg className="mb-2" width="100%" height="10"><line x1="0" y1="5" x2="100%" y2="5" stroke="#e89b2e" strokeWidth="2" strokeDasharray="6 6" className="dashflow" /></svg>
-          <p className="text-[12.5px] font-bold text-ink2">Calling ZVend ({op.type === "installation" ? "installMeter" : op.type === "activation" ? "activateMeter" : op.type === "tamper" ? "generateTamperCode" : "generateClearCode"})…</p>
-          <p className="mt-0.5 font-mono text-[10.5px] text-mute">idempotency key bound · duplicates blocked · timeout {op.zvend ? "" : ""}configured</p>
-        </div>
+        <Btn variant="primary" icon="video" onClick={openViewfinder}>
+          Open camera · {Math.floor(dur / 60)}:{String(dur % 60).padStart(2, "0")} recording rule
+        </Btn>
       )}
 
-      {z?.status === "failed" && (
-        <div className="space-y-3">
-          <p className="rounded-lg border border-[#eac5be] bg-dangersoft px-3 py-2 text-[12px] font-bold text-danger">{z.error}</p>
-          <p className="text-[11.5px] text-ink2">Response <span className="font-mono font-bold">{z.responseCode}</span> · requested {fmtDT(z.requestedAt)} · attempt {z.attempt}. The transaction is safe — no duplicate ZVend call can be issued for the same key.</p>
-          {user && ["MD", "IT_MANAGER", "SUPER_ADMIN"].includes(user.role) && (
-            <Btn variant="danger" icon="sync" onClick={() => retryZVend(op.id)}>Retry ZVend call</Btn>
-          )}
-        </div>
-      )}
-
-      {z?.status === "success" && (
-        <div className="space-y-2.5">
-          <div className="grid grid-cols-2 gap-2 text-[11.5px]">
-            <p className="rounded-md bg-paper px-2.5 py-1.5 font-bold">Response <span className="font-mono text-ok">{z.responseCode} OK</span></p>
-            <p className="rounded-md bg-paper px-2.5 py-1.5 font-bold">Ref <span className="font-mono text-info">{z.reference}</span></p>
-            <p className="rounded-md bg-paper px-2.5 py-1.5 font-bold">Requested <span className="text-ink2">{fmtDT(z.requestedAt)}</span></p>
-            <p className="rounded-md bg-paper px-2.5 py-1.5 font-bold">Responded <span className="text-ink2">{fmtDT(z.respondedAt)}</span></p>
-          </div>
-          {(op.type === "installation" || op.type === "tamper") && (
-            <div>
-              <p className="mb-1 text-[10.5px] font-extrabold tracking-widest text-mute">TAMPER CODE · 20 DIGIT · {kind.includes("tamper") ? "SENSITIVE" : "SENSITIVE"}</p>
-              <CodeBox code={z.tamperCode} onReveal={() => audit("code_reveal", `Tamper code revealed for ${op.txn}`, op.txn)} onCopy={() => audit("code_copy", `Tamper code copied for ${op.txn}`, op.txn)} />
+      {phase === "viewfinder" && (
+        <div className="anim-rise space-y-2.5">
+          <div className="relative aspect-video overflow-hidden rounded-xl bg-side">
+            <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+            {!streamRef.current && <div className="bg-circuit absolute inset-0" />}
+            <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-danger" />
+            <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-danger" />
+            <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-danger" />
+            <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-danger" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/55 to-transparent px-4 py-2.5">
+              <span className={`h-2 w-2 rounded-full ${camErr ? "bg-danger" : "bg-ok okdot"}`} />
+              <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#e6ebe7]">{camErr ? "CAMERA UNAVAILABLE" : `LIVE VIEWFINDER · ${op.meterNumber}`}</p>
             </div>
-          )}
-          {(op.type === "installation" || op.type === "clear") && (
-            <div>
-              <p className="mb-1 text-[10.5px] font-extrabold tracking-widest text-mute">CLEAR CODE · 20 DIGIT · SENSITIVE</p>
-              <CodeBox code={z.clearCode} onReveal={() => audit("code_reveal", `Clear code revealed for ${op.txn}`, op.txn)} onCopy={() => audit("code_copy", `Clear code copied for ${op.txn}`, op.txn)} />
-            </div>
-          )}
-          <p className="text-[10.5px] text-mute">Full API payload stored server-side with secrets redacted. Expected issue: {kind}.</p>
-        </div>
-      )}
-
-      {!z && <p className="text-[12px] text-mute">ZVend call is triggered automatically after MD final approval — never before.</p>}
-    </div>
-  );
-}
-
-// ============================================================
-// Audit trail
-// ============================================================
-export function AuditTrail({ op }: { op: Op }) {
-  const { state } = useStore();
-  const rows = useMemo(() => state.audit.filter(a => a.txn === op.txn), [state.audit, op.txn]);
-  const actionTone = (a: string) =>
-    a.includes("reject") || a.includes("mismatch") || a.includes("suspicious") ? "red"
-      : a.includes("approve") || a.includes("complete") ? "green"
-      : a.includes("api") || a.includes("zvend") ? "blue"
-      : a.includes("reveal") || a.includes("copy") || a.includes("delegation") ? "orange" : "gray";
-  return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-card">
-      <table className="w-full min-w-[560px] text-left">
-        <thead>
-          <tr className="border-b border-line bg-paper text-[10px] font-extrabold tracking-widest text-mute">
-            <th className="px-3.5 py-2.5">TIME</th><th className="px-3.5 py-2.5">ACTOR</th><th className="px-3.5 py-2.5">ACTION</th><th className="px-3.5 py-2.5">DETAIL</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(a => (
-            <tr key={a.id} className="border-b border-line/60 last:border-0 hover:bg-paper/60">
-              <td className="whitespace-nowrap px-3.5 py-2.5 font-mono text-[11px] text-mute">{fmtDT(a.at)}</td>
-              <td className="px-3.5 py-2.5"><p className="text-[12px] font-bold">{a.userName}</p><p className="text-[9.5px] font-bold tracking-wider text-mute">{a.role === "SYSTEM" ? "SYSTEM" : ROLE_LABEL[a.role as keyof typeof ROLE_LABEL]}</p></td>
-              <td className="px-3.5 py-2.5"><TonePill tone={actionTone(a.action) as "red"}>{a.action.replace(/_/g, " ").toUpperCase()}</TonePill></td>
-              <td className="px-3.5 py-2.5 text-[12px] text-ink2">{a.detail}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-[12px] text-mute">No audited events for this transaction yet.</td></tr>}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ============================================================
-// Stage action panel — the role-specific "do work" surface
-// ============================================================
-export function StageActionPanel({ op, navigate }: { op: Op; navigate: (to: string) => void }) {
-  const { user, can, releaseToTech, confirmCompletion, startField, submitInstallation, startInspection, submitInspection, saveCustomer, saveObservations, resubmit, delegation } = useStore();
-  if (!user) return null;
-  const actor = actionableBy(op, !!delegation);
-
-  // ---- installation field execution ----
-  if (op.type === "installation" && user.role === "TECHNICAL_MAN" && can("installation.execute")) {
-    if (op.status === "ASSIGNED") {
-      return (
-        <ActionCard title="Assigned installation" tone="teal" icon="wrench">
-          <p className="mb-3 text-[12.5px] text-ink2">Verify the meter barcode, capture GPS within ± limit, take the 4 required photos and record customer details.</p>
-          <Btn variant="volt" icon="bolt" size="lg" className="w-full" onClick={() => startField(op.id)}>START INSTALLATION</Btn>
-        </ActionCard>
-      );
-    }
-    if (op.status === "IN_PROGRESS") {
-      const scanOk = op.scan?.matched === true;
-      const gpsOk = op.gps?.accepted === true;
-      const photosOk = op.photos.length >= 4;
-      const cust = op.customer ?? { name: "", phone: "", email: "", address: "" };
-      const custOk = cust.name.trim().length > 1 && cust.phone.trim().length >= 7;
-      const StepHead = ({ n, label, done }: { n: number; label: string; done: boolean }) => (
-        <div className="mb-2.5 flex items-center gap-2">
-          <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold ${done ? "bg-ok text-white" : "bg-ink text-paper"}`}>{done ? <Icon name="check" size={12} /> : n}</span>
-          <p className="font-display text-[13.5px] font-bold">{label}</p>
-        </div>
-      );
-      return (
-        <div className="space-y-4">
-          <ActionCard title="1 · Barcode verification" tone={scanOk ? "green" : "amber"} icon="scan">
-            <ScanBlock op={op} />
-          </ActionCard>
-          <ActionCard title="2 · GPS capture" tone={gpsOk ? "green" : "amber"} icon="pin" locked={!scanOk}>
-            {scanOk ? <GpsBlock op={op} /> : <LockedNote text="Verify the meter barcode first." />}
-          </ActionCard>
-          <ActionCard title="3 · Evidence photos (4 required)" tone={photosOk ? "green" : "amber"} icon="camera" locked={!gpsOk}>
-            {gpsOk
-              ? <><PhotosBlock op={op} labels={["Meter Front", "Meter Installation", "Meter Barcode", "Installation Environment"]} /><p className="mt-2 text-[11px] font-bold text-mute">{op.photos.length}/4 captured</p></>
-              : <LockedNote text="Capture acceptable GPS first." />}
-          </ActionCard>
-          <ActionCard title="4 · Customer information" tone={custOk ? "green" : "amber"} icon="user" locked={!photosOk}>
-            {photosOk ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Customer full name"><TextInput value={cust.name} onChange={e => saveCustomer(op.id, { ...cust, name: e.target.value })} placeholder="e.g. John Joe" /></Field>
-                <Field label="Phone"><TextInput value={cust.phone} onChange={e => saveCustomer(op.id, { ...cust, phone: e.target.value })} placeholder="0803 000 0000" /></Field>
-                <Field label="Email"><TextInput value={cust.email} onChange={e => saveCustomer(op.id, { ...cust, email: e.target.value })} placeholder="name@mail.com" /></Field>
-                <Field label="Address"><TextInput value={cust.address} onChange={e => saveCustomer(op.id, { ...cust, address: e.target.value })} placeholder="Street, area" /></Field>
-                <Field label="Meter number (read-only)"><TextInput value={op.meterNumber} readOnly className="bg-paper font-mono text-mute" /></Field>
-                <Field label="Facility (read-only)"><TextInput value={op.facilityId} readOnly className="bg-paper text-mute" /></Field>
-                <p className="text-[11px] text-mute sm:col-span-2">Customer data is submitted as part of the activation workflow.</p>
+            {camErr && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-dangersoft text-danger"><Icon name="alert" size={18} /></span>
+                <p className="max-w-sm text-[12px] font-semibold leading-snug text-[#c9d3cc]">{camErr}</p>
               </div>
-            ) : <LockedNote text="Complete the evidence photos first." />}
-          </ActionCard>
-          <Btn variant="ok" icon="check" size="lg" className="w-full" disabled={!(scanOk && gpsOk && photosOk && custOk)} onClick={() => submitInstallation(op.id)}>
-            SUBMIT COMPLETED INSTALLATION
-          </Btn>
-          {!(scanOk && gpsOk && photosOk && custOk) && <p className="text-center text-[11px] font-bold text-mute">All four steps must be green before submission.</p>}
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="danger" icon="video" disabled={!!camErr} onClick={beginRecording}>START RECORDING · {dur}s</Btn>
+            {camErr && <Btn variant="outline" icon="video" onClick={() => { setSimulated(true); setLeft(dur); setPhase("rec"); }}>Simulate recording</Btn>}
+            {!camErr && <Btn variant="outline" icon="camera" onClick={openViewfinder}>Retry camera</Btn>}
+            <Btn variant="ghost" onClick={() => { stopStream(); setPhase("idle"); }}>Cancel</Btn>
+          </div>
         </div>
-      );
-    }
-  }
+      )}
 
-  // ---- inspection field execution ----
-  if (op.type === "inspection" && user.role === "TECHNICAL_MAN" && can("inspection.execute")) {
-    if (op.status === "SCHEDULED" || op.status === "REJECTED") {
-      return (
-        <ActionCard title={op.status === "REJECTED" ? "Inspection rejected — retry available" : "Scheduled inspection"} tone={op.status === "REJECTED" ? "red" : "teal"} icon="clipboard">
-          <p className="mb-2 text-[12.5px] text-ink2">{op.instruction}</p>
-          <p className="mb-3 font-mono text-[11px] text-mute">video duration {mmss(op.durationSec ?? 120)} · scheduled {op.scheduledFor ? fmtDT(op.scheduledFor) : "—"}</p>
-          <Btn variant="volt" icon="video" size="lg" className="w-full" onClick={() => startInspection(op.id)}>
-            {op.status === "REJECTED" ? "RE-START INSPECTION" : "START INSPECTION"}
-          </Btn>
-        </ActionCard>
-      );
-    }
-    if (op.status === "IN_PROGRESS") {
-      const scanOk = op.scan?.matched === true;
-      const gpsOk = op.gps?.accepted === true;
-      const videoOk = !!op.video;
-      const obsOk = (op.observations ?? "").trim().length > 5;
-      return (
-        <div className="space-y-4">
-          <ActionCard title="1 · Barcode verification" tone={scanOk ? "green" : "amber"} icon="scan"><ScanBlock op={op} /></ActionCard>
-          <ActionCard title="2 · GPS capture" tone={gpsOk ? "green" : "amber"} icon="pin" locked={!scanOk}>
-            {scanOk ? <GpsBlock op={op} /> : <LockedNote text="Verify the meter barcode first." />}
-          </ActionCard>
-          <ActionCard title="3 · Inspection video" tone={videoOk ? "green" : "amber"} icon="video" locked={!gpsOk}>
-            {gpsOk ? <VideoBlock op={op} durationSec={op.durationSec ?? 120} /> : <LockedNote text="Capture acceptable GPS first." />}
-          </ActionCard>
-          <ActionCard title="4 · Observations" tone={obsOk ? "green" : "amber"} icon="doc" locked={!videoOk}>
-            {videoOk ? <Textarea value={op.observations ?? ""} onChange={e => saveObservations(op.id, e.target.value)} placeholder="Describe seal condition, display state, wiring, environment…" /> : <LockedNote text="Finish the inspection video first." />}
-          </ActionCard>
-          <Btn variant="ok" icon="check" size="lg" className="w-full" disabled={!(scanOk && gpsOk && videoOk && obsOk)} onClick={() => submitInspection(op.id)}>
-            SUBMIT INSPECTION EVIDENCE
-          </Btn>
+      {phase === "rec" && (
+        <div className="relative aspect-video overflow-hidden rounded-xl bg-side anim-rise">
+          {!simulated && streamRef.current
+            ? <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+            : <div className="bg-circuit absolute inset-0" />}
+          <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-danger" />
+          <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-danger" />
+          <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-danger" />
+          <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-danger" />
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent px-4 py-2.5">
+            <span className="flex items-center gap-2 font-mono text-[12px] font-extrabold tracking-[0.22em] text-white"><span className="h-2.5 w-2.5 rounded-full bg-danger recblink" />RECORDING{simulated ? " · SIMULATED" : ""}</span>
+            <span className="font-mono text-[11px] font-bold text-[#e6ebe7]">{op.meterNumber}</span>
+          </div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <p className="rounded-xl bg-ink/70 px-5 py-2 font-display text-[46px] font-bold leading-none text-paper tnum">{mm}:{ss}</p>
+            <p className="mt-2 font-mono text-[10px] tracking-widest text-[#c9d3cc]">AUTO-STOPS AT ZERO</p>
+          </div>
+          <div className="absolute inset-x-4 bottom-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+            <div className="h-full rounded-full bg-danger transition-[width] duration-1000 ease-linear" style={{ width: `${(left / dur) * 100}%` }} />
+          </div>
         </div>
-      );
-    }
-  }
+      )}
 
-  // ---- ZVEND_SUCCESS handlers ----
-  if (op.status === "ZVEND_SUCCESS") {
-    if (op.type === "installation" && user.role === "SECRETARY" && can("installation.approve")) {
-      return (
-        <ActionCard title="ZVend registration complete" tone="teal" icon="bolt">
-          <p className="mb-3 text-[12.5px] text-ink2">Tamper and clear codes are issued. Verify them above, then release the task to the field.</p>
-          <Btn variant="volt" icon="arrowR" size="lg" className="w-full" onClick={() => releaseToTech(op.id)}>MAKE AVAILABLE TO TECHNICAL MAN</Btn>
-        </ActionCard>
-      );
-    }
-    if (op.type === "activation" && user.role === "SECRETARY" && can("activation.approve")) {
-      return (
-        <ActionCard title="ZVend activation confirmed" tone="teal" icon="power">
-          <p className="mb-3 text-[12.5px] text-ink2">ZVend has energized the meter. Confirm to close the workflow — the Technical Man receives completion status.</p>
-          <Btn variant="ok" icon="check" size="lg" className="w-full" onClick={() => confirmCompletion(op.id)}>CONFIRM & COMPLETE WORKFLOW</Btn>
-        </ActionCard>
-      );
-    }
-    if ((op.type === "tamper" || op.type === "clear") && (user.role === "SECRETARY" || op.initiatorId === user.id)) {
-      return (
-        <ActionCard title="Code issued by ZVend" tone="teal" icon="key">
-          <p className="mb-3 text-[12.5px] text-ink2">Reveal the 20-digit code above, deliver it over a secure channel, then confirm delivery to close the record.</p>
-          <Btn variant="ok" icon="check" size="lg" className="w-full" onClick={() => confirmCompletion(op.id)}>CONFIRM CODE DELIVERED</Btn>
-        </ActionCard>
-      );
-    }
-  }
-
-  // ---- RETURNED / resubmit ----
-  if (op.status === "RETURNED" || (op.type === "activation" && op.status === "IN_PROGRESS" && op.stageIdx === 0)) {
-    const owner = STAGES[op.type][op.stageIdx].role;
-    if (op.status !== "RETURNED" && owner === user.role && user.id !== op.initiatorId) {
-      return (
-        <ActionCard title="Returned for revision" tone="orange" icon="chevL">
-          <p className="mb-3 text-[12.5px] text-ink2">This record was returned. Review the comments and resubmit it into the chain — history is preserved.</p>
-          <Btn variant="primary" icon="sync" onClick={() => resubmit(op.id)}>RESUBMIT INTO WORKFLOW</Btn>
-        </ActionCard>
-      );
-    }
-    if (user.id === op.initiatorId && (op.status === "RETURNED" || (op.type === "activation" && op.status === "IN_PROGRESS" && op.stageIdx === 0))) {
-      return (
-        <ActionCard title="Returned to you for revision" tone="orange" icon="chevL">
-          <p className="mb-3 text-[12.5px] text-ink2">Address the reviewer comments, then resubmit.</p>
-          <Btn variant="primary" icon="sync" onClick={() => resubmit(op.id)}>RESUBMIT INTO WORKFLOW</Btn>
-        </ActionCard>
-      );
-    }
-  }
-
-  // ---- approval decision ----
-  if (actor === user.role && ["PENDING_ENERGY_MANAGER", "PENDING_GM", "PENDING_MD", "PENDING_SECRETARY"].includes(op.status)) {
-    return <DecisionPanel op={op} />;
-  }
-
-  // ---- read-only status note ----
-  const note = op.status === "WAITING_ZVEND" ? "ZVend call in progress — this stage is automatic."
-    : op.status === "SCHEDULED" ? "Waiting for the Technical Man to start the field inspection."
-    : op.status === "ASSIGNED" ? "Assigned — waiting for the Technical Man to start."
-    : op.status === "COMPLETED" ? "Workflow complete. Full history preserved below."
-    : actor === "ZVEND" ? "Awaiting ZVend."
-    : actor ? `Awaiting ${ROLE_LABEL[actor as keyof typeof ROLE_LABEL] ?? actor}. No action required from your role.`
-    : "No action required from your role on this record.";
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-dashed border-line2 bg-paper/70 p-4">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink/6 text-mute"><Icon name={op.status === "COMPLETED" ? "check" : "clock"} size={16} /></span>
-      <p className="text-[12.5px] font-semibold text-ink2">{note}</p>
+      {phase === "review" && (
+        <div className="space-y-2.5 anim-rise">
+          {url ? <video src={url} controls playsInline className="aspect-video w-full rounded-xl border border-line bg-side object-contain" />
+            : <div className="flex aspect-video flex-col items-center justify-center gap-1 rounded-xl border border-line bg-side"><Icon name="video" size={20} className="text-[#5d6b62]" /><p className="font-mono text-[11px] text-[#93a29a]">SIMULATED CAPTURE · {dur}s</p></div>}
+          <Textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Inspection observations — seal state, display readings, terminal block…" />
+          {autoSubmit && (
+            <div className="grid gap-1.5 sm:grid-cols-4 anim-fade">
+              {[{ ok: scanOk, t: "Barcode verified" }, { ok: gpsOk, t: "GPS accepted" }, { ok: phase === "review", t: "Video recorded" }, { ok: obs.trim().length >= 5, t: "Observations ≥ 5" }].map(g => (
+                <span key={g.t} className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[10px] font-extrabold tracking-wide transition-colors ${g.ok ? "border-[#c2ddcd] bg-oksoft text-ok" : "border-[#eac5be] bg-dangersoft text-danger"}`}>
+                  <Icon name={g.ok ? "check" : "alert"} size={11} /> {g.t.toUpperCase()}
+                </span>
+              ))}
+            </div>
+          )}
+          {err && <p className="flex items-center gap-1.5 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={12} />{err}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ok" icon="check" loading={busy} disabled={obs.trim().length < 5 || (autoSubmit && (!scanOk || !gpsOk))} onClick={autoSubmit ? () => void finish() : save}>{autoSubmit ? "Save & submit for review" : "Save video & observations"}</Btn>
+            <Btn variant="outline" icon="video" onClick={() => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); urlRef.current = null; setUrl(null); setSimulated(false); openViewfinder(); }}>Discard & re-record</Btn>
+          </div>
+          <p className="text-[10.5px] font-semibold text-mute">{autoSubmit
+            ? `Submission unlocks only when barcode${scanOk ? " ✓" : ""}, GPS${gpsOk ? " ✓" : ""}, video ✓ and observations are all complete.`
+            : "Observations require at least 5 characters — they become the execution comment."}</p>
+        </div>
+      )}
     </div>
   );
 }
 
-function ActionCard({ title, tone, icon, locked, children }: { title: string; tone: "green" | "amber" | "teal" | "red" | "orange"; icon: string; locked?: boolean; children: React.ReactNode }) {
-  const border = { green: "border-[#c2ddcd]", amber: "border-[#eed9b4]", teal: "border-[#bfdbde]", red: "border-[#eac5be]", orange: "border-[#f0d9ae]" }[tone];
+export function EvidenceRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className={`rounded-xl border ${border} bg-card p-4 ${locked ? "opacity-60" : ""} anim-rise`}>
-      <div className="mb-3 flex items-center gap-2">
-        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tone === "green" ? "bg-oksoft text-ok" : tone === "red" ? "bg-dangersoft text-danger" : tone === "teal" ? "bg-tealsoft text-teal" : tone === "orange" ? "bg-voltsoft text-volt2" : "bg-warnsoft text-warn"}`}><Icon name={icon} size={14} /></span>
-        <p className="font-display text-[14px] font-bold">{title}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function LockedNote({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-paper px-3 py-2.5 text-[12px] font-bold text-mute">
-      <Icon name="lock" size={14} /> {text}
-    </div>
-  );
-}
-
-// ============================================================
-// Record summary side panel
-// ============================================================
-export function RecordMeta({ op, facilityName, children }: { op: Op; facilityName: string; children?: React.ReactNode }) {
-  return (
-    <div className="space-y-3">
-      <div>
-        <div className="mb-1 flex items-center gap-2">
-          <Icon name={OPS[op.type].icon} size={15} className="text-volt2" />
-          <p className="text-[11px] font-extrabold tracking-widest text-mute">METER</p>
-        </div>
-        <p className="font-mono text-[19px] font-bold tracking-wide">{op.meterNumber}</p>
-        <p className="text-[12px] font-semibold text-ink2">{facilityName}</p>
-      </div>
+    <div className="rounded-xl border border-line bg-card p-4">
+      <p className="mb-2.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">{label.toUpperCase()}</p>
       {children}
     </div>
   );

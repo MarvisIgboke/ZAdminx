@@ -1,186 +1,167 @@
-import { useCallback, useEffect, useState } from "react";
-import type { ReactNode, InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes, ButtonHTMLAttributes } from "react";
-import type { OpStatus, Tone } from "../lib/types";
-import { STATUS_META } from "../lib/types";
-import { useStore } from "../lib/store";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import type { OpStatus } from "../lib/core";
+import { STATUS_META } from "../lib/core";
 
-// ============================================================
-// Hash router
-// ============================================================
+/* ================= Hash router ================= */
 export function useRoute() {
-  const [path, setPath] = useState(() => window.location.hash.replace(/^#\/?/, ""));
+  const [hash, setHash] = useState(() => window.location.hash.replace(/^#\/?/, ""));
   useEffect(() => {
-    const fn = () => setPath(window.location.hash.replace(/^#\/?/, ""));
+    const fn = () => setHash(window.location.hash.replace(/^#\/?/, ""));
     window.addEventListener("hashchange", fn);
     return () => window.removeEventListener("hashchange", fn);
   }, []);
-  const nav = useCallback((to: string) => { window.location.hash = "/" + to.replace(/^\/+/, ""); }, []);
-  return { path, parts: path.split("/").filter(Boolean), nav };
+  const parts = hash.split("/").filter(Boolean);
+  return { path: hash, parts, nav: (to: string) => { window.location.hash = "/" + to; } };
 }
 
-// ============================================================
-// Icons — inline SVG, stroke-based
-// ============================================================
-const P: Record<string, ReactNode> = {
-  logo: <><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="currentColor" stroke="none" /></>,
-  dashboard: <><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="5" rx="1.5" /><rect x="13" y="10" width="8" height="11" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /></>,
+/* ================= Icons ================= */
+const paths: Record<string, ReactNode> = {
+  bolt: <path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2z" />,
+  grid: <><rect x="3" y="3" width="7.5" height="7.5" rx="1.5" /><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" /><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" /></>,
   wrench: <path d="M14.7 6.3a4.5 4.5 0 0 0-6 5.6L3 17.6V21h3.4l5.7-5.7a4.5 4.5 0 0 0 5.6-6L14.5 12l-2.5-2.5 2.7-3.2z" />,
   power: <><path d="M12 2v9" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></>,
-  clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.5h6V4" /><path d="m8.5 13 2.5 2.5 4.5-5" /></>,
-  shield: <><path d="M12 2 4.5 5v6c0 5 3.2 8.8 7.5 10.5 4.3-1.7 7.5-5.5 7.5-10.5V5L12 2z" /><path d="M12 8v4" /><circle cx="12" cy="15" r="0.6" fill="currentColor" /></>,
-  key: <><circle cx="8" cy="15" r="4.5" /><path d="m11.5 11.5 8-8" /><path d="M17 6l2.5 2.5" /><path d="M14 9l2 2" /></>,
-  approve: <><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="m8 12.5 2.8 2.8L16.5 9" /></>,
+  clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 2.5h6V6H9z" /><path d="M9 11h6M9 15h4" /></>,
+  shield: <path d="M12 2 4 5.5v5.7c0 5 3.4 8.6 8 10.3 4.6-1.7 8-5.3 8-10.3V5.5L12 2z" />,
+  key: <><circle cx="8" cy="15" r="4.5" /><path d="m11.5 11.5 8-8M17 6l2.5 2.5M14 9l2 2" /></>,
+  approve: <><circle cx="12" cy="12" r="9" /><path d="m8 12.5 2.7 2.7L16.5 9" /></>,
+  bell: <><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6z" /><path d="M10 20a2.2 2.2 0 0 0 4 0" /></>,
   building: <><rect x="4" y="3" width="16" height="18" rx="1.5" /><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2M10 21v-3h4v3" /></>,
   users: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c.5-3.5 3-5.5 6-5.5s5.5 2 6 5.5" /><circle cx="17" cy="9" r="2.4" /><path d="M16.5 14.6c2.4.3 4 2 4.5 4.6" /></>,
-  gauge: <><path d="M4 14a8 8 0 1 1 16 0" /><path d="M12 14l3.5-4" /><path d="M4 18h16" /></>,
-  chart: <><path d="M3 3v18h18" /><path d="M7 15v3M12 10v8M17 6v12" /></>,
-  bell: <><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6" /><path d="M10 19a2.2 2.2 0 0 0 4 0" /></>,
-  settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" /></>,
+  gauge: <><path d="M4 14a8 8 0 1 1 16 0" /><path d="M12 14 15.5 9" /><path d="M2.5 18h19" /></>,
+  chart: <><path d="M3 3v18h18" /><path d="M7 15l4-5 3 3 5-7" /></>,
+  user: <><circle cx="12" cy="8" r="3.6" /><path d="M4.5 20.5c.8-4 3.9-6 7.5-6s6.7 2 7.5 6" /></>,
+  settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2.8 13.5 5h2.6l.8 2.4 2.3 1.3-.5 2.6 1.6 2-1.6 2 .5 2.6-2.3 1.3-.8 2.4h-2.6L12 21.2 10.5 19H7.9l-.8-2.4-2.3-1.3.5-2.6-1.6-2 1.6-2-.5-2.6 2.3-1.3L7.9 5h2.6L12 2.8z" /></>,
   plug: <><path d="M9 2v6M15 2v6" /><path d="M6 8h12v3a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8z" /><path d="M12 17v5" /></>,
   list: <><path d="M8 6h13M8 12h13M8 18h13" /><circle cx="4" cy="6" r="1" fill="currentColor" /><circle cx="4" cy="12" r="1" fill="currentColor" /><circle cx="4" cy="18" r="1" fill="currentColor" /></>,
-  history: <><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3.5 2" /></>,
-  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></>,
-  search: <><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>,
-  plus: <path d="M12 5v14M5 12h14" />,
+  history: <><path d="M3 12a9 9 0 1 0 2.6-6.3L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3.5 2" /></>,
+  pin: <><path d="M12 21s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z" /><circle cx="12" cy="10" r="2.6" /></>,
+  nav: <path d="M12 2l7 19-7-4.2L5 21l7-19z" />,
+  camera: <><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="14" r="3.6" /></>,
+  video: <><rect x="2.5" y="6" width="13" height="12" rx="2" /><path d="m15.5 10.5 6-3.5v10l-6-3.5" /></>,
+  scan: <><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" /><path d="M7 12h10" /></>,
+  wifi: <><path d="M2.5 9a15 15 0 0 1 19 0" /><path d="M5.5 12.5a10 10 0 0 1 13 0" /><path d="M8.5 16a5 5 0 0 1 7 0" /><circle cx="12" cy="19.4" r="1.1" fill="currentColor" /></>,
+  wifioff: <><path d="m3 3 18 18" /><path d="M5.5 12.5a10 10 0 0 1 5.2-2.7M16.4 10.8a10 10 0 0 1 2.1 1.7" /><path d="M8.5 16a5 5 0 0 1 7 0" /><circle cx="12" cy="19.4" r="1.1" fill="currentColor" /></>,
   x: <path d="M18 6 6 18M6 6l12 12" />,
-  check: <path d="m4.5 12.5 5 5 10-11" />,
-  chevD: <path d="m6 9 6 6 6-6" />,
+  check: <path d="m4.5 12.5 5 5L19.5 7" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  search: <><circle cx="10.5" cy="10.5" r="7" /><path d="m16 16 5 5" /></>,
   chevR: <path d="m9 6 6 6-6 6" />,
   chevL: <path d="m15 6-6 6 6 6" />,
+  chevD: <path d="m6 9 6 6 6-6" />,
+  arrowR: <path d="M4 12h16m-6-6 6 6-6 6" />,
   alert: <><path d="M12 3 2.5 20h19L12 3z" /><path d="M12 10v4" /><circle cx="12" cy="17" r="0.6" fill="currentColor" /></>,
-  camera: <><path d="M4 7h3l2-2.5h6L17 7h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" /><circle cx="12" cy="13" r="3.5" /></>,
-  video: <><rect x="2.5" y="6" width="13" height="12" rx="2" /><path d="m15.5 10.5 6-3.5v10l-6-3.5" /></>,
-  pin: <><path d="M12 21s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></>,
-  wifi: <><path d="M2.5 9a15 15 0 0 1 19 0" /><path d="M5.5 12.5a10.5 10.5 0 0 1 13 0" /><path d="M8.5 16a6 6 0 0 1 7 0" /><circle cx="12" cy="19" r="1" fill="currentColor" /></>,
-  wifioff: <><path d="m3 3 18 18" /><path d="M5.5 12.5a10.5 10.5 0 0 1 4.6-2.3M14.6 10.4a10.5 10.5 0 0 1 3.9 2.1" /><path d="M8.5 16a6 6 0 0 1 7 0" /><circle cx="12" cy="19" r="1" fill="currentColor" /></>,
-  sync: <><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><circle cx="12" cy="8" r="0.7" fill="currentColor" /></>,
   copy: <><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
-  eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>,
-  eyeoff: <><path d="m3 3 18 18" /><path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17.4 17.4 0 0 1-2.9 3.8M6.6 6.6A16.7 16.7 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>,
+  download: <><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M4 21h16" /></>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></>,
-  download: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></>,
-  filter: <path d="M3 5h18l-7 8v6l-4 2v-8L3 5z" />,
-  arrowR: <><path d="M4 12h15" /><path d="m13 6 6 6-6 6" /></>,
-  bolt: <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />,
-  scan: <><path d="M3 7V4a1 1 0 0 1 1-1h3M17 3h3a1 1 0 0 1 1 1v3M21 17v3a1 1 0 0 1-1 1h-3M7 21H4a1 1 0 0 1-1-1v-3" /><path d="M3 12h18" /></>,
-  user: <><circle cx="12" cy="8" r="4" /><path d="M4.5 21c.8-4 4-6 7.5-6s6.7 2 7.5 6" /></>,
-  phone: <path d="M5 3h4l1.5 5-2.5 1.5a12 12 0 0 0 6.5 6.5L16 13.5l5 1.5v4a2 2 0 0 1-2 2A16 16 0 0 1 3 5a2 2 0 0 1 2-2z" />,
-  mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></>,
-  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><circle cx="12" cy="8" r="0.6" fill="currentColor" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>,
   doc: <><path d="M6 2h9l5 5v15H6V2z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" /></>,
+  lock: <><rect x="5" y="10.5" width="14" height="10.5" rx="2" /><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" /></>,
+  eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeoff: <><path d="m3 3 18 18" /><path d="M10.6 6a9.8 9.8 0 0 1 1.4-.1c6 0 9.5 6.1 9.5 6.1a17 17 0 0 1-2.7 3.4M6.6 6.9A16 16 0 0 0 2.5 12S6 18.1 12 18.1a9.6 9.6 0 0 0 4.3-1" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
+  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></>,
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   db: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" /><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" /></>,
-  lock: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+  flag: <><path d="M5 3v18" /><path d="M5 4c4-2.2 7 2 14 0v9c-7 2.2-10-2-14 0z" /></>,
+  minus: <path d="M5 12h14" />,
+  keyboard: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" /></>,
+  sync: <><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /></>,
+  wallet: <><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M15.5 12.5H21v3h-5.5a1.5 1.5 0 0 1 0-3z" /><path d="M3 9.5V8a2 2 0 0 1 2-2h11.5" /></>,
+  file: <><path d="M6 2h9l5 5v15H6V2z" /><path d="M14 2v6h6" /></>,
 };
-
-export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
+export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
-      {P[name] ?? P.info}
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${className ?? ""}`}>
+      {paths[name] ?? <circle cx="12" cy="12" r="8" />}
     </svg>
   );
 }
 
-// ============================================================
-// Primitives
-// ============================================================
-const toneCls: Record<Tone, string> = {
-  amber: "bg-warnsoft text-warn border-[#eed9b4]",
-  orange: "bg-voltsoft text-volt2 border-[#f0d9ae]",
-  green: "bg-oksoft text-ok border-[#c2ddcd]",
-  red: "bg-dangersoft text-danger border-[#eac5be]",
-  blue: "bg-infosoft text-info border-[#c3d7e3]",
-  teal: "bg-tealsoft text-teal border-[#bfdbde]",
-  gray: "bg-paper text-mute border-line",
-  ink: "bg-ink text-paper border-ink",
-};
-
-export function StatusPill({ status, pulse }: { status: OpStatus; pulse?: boolean }) {
-  const m = STATUS_META[status];
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide whitespace-nowrap ${toneCls[m.tone]}`}>
-      <span className={`h-1.5 w-1.5 rounded-full bg-current ${pulse ? "livedot" : ""}`} />
-      {m.label.toUpperCase()}
-    </span>
-  );
-}
-
-export function TonePill({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide ${toneCls[tone]}`}>{children}</span>;
-}
-
-type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "volt" | "ghost" | "danger" | "outline" | "ok";
-  size?: "sm" | "md" | "lg";
-  icon?: string;
-  loading?: boolean;
-};
-export function Btn({ variant = "primary", size = "md", icon, loading, className = "", children, disabled, ...rest }: BtnProps) {
+/* ================= Primitives ================= */
+export function Btn({ children, onClick, variant = "outline", size = "md", icon, disabled, loading, className = "", type = "button" }: {
+  children?: ReactNode; onClick?: () => void; variant?: "primary" | "volt" | "outline" | "ghost" | "danger" | "ok";
+  size?: "sm" | "md" | "lg"; icon?: string; disabled?: boolean; loading?: boolean; className?: string; type?: "button" | "submit";
+}) {
   const v = {
     primary: "bg-ink text-paper hover:bg-side3 border border-ink",
-    volt: "bg-volt text-ink hover:bg-[#f2ac49] border border-[#c9831d] font-extrabold",
-    ok: "bg-ok text-white hover:bg-[#166b43] border border-[#166b43]",
-    danger: "bg-danger text-white hover:bg-[#9c2f25] border border-[#9c2f25]",
+    volt: "bg-volt text-ink hover:bg-[#f0ac49] border border-volt font-extrabold",
+    outline: "bg-card text-ink border border-line2 hover:border-ink/50 hover:bg-paper",
     ghost: "bg-transparent text-ink2 hover:bg-ink/5 border border-transparent",
-    outline: "bg-card text-ink hover:bg-paper border border-line2",
+    danger: "bg-danger text-white hover:bg-[#9c2f24] border border-danger",
+    ok: "bg-ok text-white hover:bg-[#17653f] border border-ok",
   }[variant];
-  const s = { sm: "h-8 px-2.5 text-[12px] gap-1.5", md: "h-9.5 px-3.5 text-[13px] gap-2", lg: "h-12 px-5 text-[15px] gap-2.5" }[size];
+  const s = { sm: "h-8 px-3 text-[12px] gap-1.5", md: "h-9.5 px-4 text-[13px] gap-2", lg: "h-12 px-5 text-[14px] gap-2" }[size];
   return (
-    <button
-      className={`inline-flex items-center justify-center rounded-lg font-bold transition-all duration-150 active:scale-[0.98] disabled:opacity-45 disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-volt ${v} ${s} ${className}`}
-      disabled={disabled || loading} {...rest}
-    >
-      {loading ? <span className="spin inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent" /> : icon ? <Icon name={icon} size={size === "sm" ? 14 : 16} /> : null}
+    <button type={type} onClick={onClick} disabled={disabled || loading}
+      className={`inline-flex items-center justify-center rounded-lg font-bold transition-all active:scale-[0.98] disabled:opacity-45 disabled:pointer-events-none ${v} ${s} ${className}`}>
+      {loading ? <Icon name="sync" size={size === "lg" ? 16 : 14} className="spin" /> : icon ? <Icon name={icon} size={size === "lg" ? 16 : 14} /> : null}
       {children}
     </button>
   );
 }
 
-export function Card({ className = "", children, onClick }: { className?: string; children: ReactNode; onClick?: () => void }) {
+export function Card({ children, className = "", onClick }: { children: ReactNode; className?: string; onClick?: () => void }) {
+  return <div onClick={onClick} className={`rounded-xl border border-line bg-card shadow-[0_1px_2px_rgba(26,35,30,0.05)] ${onClick ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_18px_rgba(26,35,30,0.09)]" : ""} ${className}`}>{children}</div>;
+}
+
+export function SectionHead({ title, sub, right }: { title: string; sub?: string; right?: ReactNode }) {
   return (
-    <div onClick={onClick} className={`rounded-xl border border-line bg-card shadow-[0_1px_2px_rgba(26,35,30,0.05)] ${onClick ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(26,35,30,0.1)]" : ""} ${className}`}>
-      {children}
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3 anim-rise">
+      <div>
+        <h1 className="font-display text-[22px] font-bold tracking-tight">{title}</h1>
+        {sub && <p className="mt-0.5 text-[12.5px] text-mute">{sub}</p>}
+      </div>
+      {right}
     </div>
   );
 }
 
+const tones: Record<string, string> = {
+  gray: "bg-ink/6 text-ink2", amber: "bg-warnsoft text-warn", green: "bg-oksoft text-ok",
+  red: "bg-dangersoft text-danger", blue: "bg-infosoft text-info", teal: "bg-tealsoft text-teal", ink: "bg-ink text-paper",
+};
+export function TonePill({ tone, children }: { tone: string; children: ReactNode }) {
+  return <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide ${tones[tone] ?? tones.gray}`}>{children}</span>;
+}
+export function StatusPill({ status, pulse }: { status: OpStatus; pulse?: boolean }) {
+  const m = STATUS_META[status];
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10.5px] font-extrabold tracking-wide ${tones[m.tone]}`}>
+      {pulse && <span className={`h-1.5 w-1.5 rounded-full ${m.tone === "amber" ? "bg-warn livedot" : m.tone === "blue" || m.tone === "teal" ? "bg-info livedot" : "bg-current"}`} />}
+      {m.label.toUpperCase()}
+    </span>
+  );
+}
+
+export function Field({ label, children, error, hint }: { label: string; children: ReactNode; error?: string; hint?: string }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10.5px] font-extrabold tracking-[0.12em] text-mute">{label.toUpperCase()}</span>
+      {children}
+      {error ? <span className="mt-1 flex items-center gap-1 text-[11px] font-bold text-danger anim-fade"><Icon name="alert" size={11} />{error}</span>
+        : hint ? <span className="mt-1 block text-[10.5px] text-mute">{hint}</span> : null}
+    </label>
+  );
+}
+const inputCls = "w-full rounded-lg border border-line2 bg-card px-3 py-2 text-[13px] font-semibold outline-none transition-colors placeholder:font-medium placeholder:text-mute/60 focus:border-volt focus:ring-2 focus:ring-volt/25";
+export function TextInput(p: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...p} className={`${inputCls} ${p.className ?? ""}`} />; }
+export function Textarea(p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea rows={3} {...p} className={`${inputCls} resize-y ${p.className ?? ""}`} />; }
+export function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...p} className={`${inputCls} ${p.className ?? ""}`} />; }
+
 export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; wide?: boolean }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
-      <div className="absolute inset-0 bg-ink/55 anim-fade" onClick={onClose} />
-      <div className={`relative w-full ${wide ? "max-w-3xl" : "max-w-lg"} anim-rise max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-xl border border-line bg-card shadow-2xl`}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-0 backdrop-blur-[2px] sm:items-center sm:p-6 anim-fade" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className={`max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-line bg-card shadow-2xl sm:rounded-2xl anim-rise ${wide ? "sm:max-w-2xl" : "sm:max-w-md"}`}>
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-card px-5 py-3.5">
-          <h3 className="font-display text-[15px] font-bold">{title}</h3>
-          <button onClick={onClose} className="rounded-md p-1.5 text-mute hover:bg-paper hover:text-ink transition-colors"><Icon name="x" /></button>
+          <h2 className="font-display text-[15.5px] font-bold">{title}</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 text-mute transition-colors hover:bg-ink/5 hover:text-ink"><Icon name="x" size={15} /></button>
         </div>
         <div className="p-5">{children}</div>
       </div>
     </div>
   );
-}
-
-export function Field({ label, error, children, hint }: { label: string; error?: string; children: ReactNode; hint?: string }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[11px] font-extrabold tracking-wider text-mute uppercase">{label}</span>
-      {children}
-      {hint && !error && <span className="mt-1 block text-[11px] text-mute">{hint}</span>}
-      {error && <span className="mt-1 block text-[11px] font-bold text-danger">{error}</span>}
-    </label>
-  );
-}
-
-const inputCls = "w-full rounded-lg border border-line2 bg-card px-3 py-2 text-[13.5px] text-ink placeholder:text-mute/70 focus:border-volt focus:outline-none focus:ring-2 focus:ring-volt/25 transition-shadow";
-export function TextInput(p: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...p} className={`${inputCls} ${p.className ?? ""}`} />;
-}
-export function Select(p: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...p} className={`${inputCls} appearance-none ${p.className ?? ""}`} />;
-}
-export function Textarea(p: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...p} className={`${inputCls} min-h-[84px] resize-y ${p.className ?? ""}`} />;
 }
 
 export function Tabs({ tabs, active, onChange }: { tabs: { key: string; label: string; count?: number }[]; active: string; onChange: (k: string) => void }) {
@@ -190,67 +171,8 @@ export function Tabs({ tabs, active, onChange }: { tabs: { key: string; label: s
         <button key={t.key} onClick={() => onChange(t.key)}
           className={`flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-bold transition-all ${active === t.key ? "bg-ink text-paper shadow-sm" : "text-ink2 hover:bg-ink/5"}`}>
           {t.label}
-          {t.count !== undefined && t.count > 0 && (
-            <span className={`rounded-full px-1.5 text-[10.5px] font-extrabold ${active === t.key ? "bg-volt text-ink" : "bg-ink/10 text-ink2"}`}>{t.count}</span>
-          )}
+          {t.count !== undefined && t.count > 0 && <span className={`rounded-full px-1.5 text-[10.5px] font-extrabold tnum ${active === t.key ? "bg-volt text-ink" : "bg-ink/10 text-ink2"}`}>{t.count}</span>}
         </button>
-      ))}
-    </div>
-  );
-}
-
-export function EmptyState({ icon = "doc", title, sub, action }: { icon?: string; title: string; sub?: string; action?: ReactNode }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line2 bg-paper/60 px-6 py-12 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-ink/5 text-mute"><Icon name={icon} size={22} /></span>
-      <p className="font-display text-[15px] font-bold text-ink">{title}</p>
-      {sub && <p className="max-w-sm text-[12.5px] text-mute">{sub}</p>}
-      {action && <div className="mt-2">{action}</div>}
-    </div>
-  );
-}
-
-export function Avatar({ name, size = 32, tone = "bg-ink text-paper" }: { name: string; size?: number; tone?: string }) {
-  const init = name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
-  return (
-    <span className={`inline-flex shrink-0 items-center justify-center rounded-full font-display font-bold ${tone}`}
-      style={{ width: size, height: size, fontSize: size * 0.36 }}>
-      {init}
-    </span>
-  );
-}
-
-export function KV({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-line/70 py-2 last:border-0">
-      <span className="text-[11px] font-extrabold uppercase tracking-wider text-mute pt-0.5">{k}</span>
-      <span className={`text-right text-[13px] font-semibold text-ink ${mono ? "font-mono" : ""}`}>{v}</span>
-    </div>
-  );
-}
-
-export function Stat({ label, value, tone = "text-ink", sub }: { label: string; value: ReactNode; tone?: string; sub?: string }) {
-  return (
-    <div className="min-w-0">
-      <div className={`font-display text-[26px] leading-none font-bold tnum ${tone}`}>{value}</div>
-      <div className="mt-1 text-[11px] font-extrabold uppercase tracking-wider text-mute">{label}</div>
-      {sub && <div className="text-[11px] text-mute">{sub}</div>}
-    </div>
-  );
-}
-
-export function Bars({ data, height = 56 }: { data: { label: string; a: number; b?: number }[]; height?: number }) {
-  const max = Math.max(1, ...data.map(d => d.a + (d.b ?? 0)));
-  return (
-    <div className="flex items-end gap-1.5" style={{ height }}>
-      {data.map((d, i) => (
-        <div key={i} className="group relative flex flex-1 flex-col justify-end gap-0.5" style={{ height }}>
-          <div className="anim-bar rounded-sm bg-ink/80 transition-colors group-hover:bg-volt" style={{ height: `${(d.a / max) * 100}%`, minHeight: d.a ? 3 : 0 }} />
-          {d.b !== undefined && <div className="anim-bar rounded-sm bg-volt/70" style={{ height: `${(d.b / max) * 100}%`, minHeight: d.b ? 3 : 0 }} />}
-          <span className="pointer-events-none absolute -top-6 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-ink px-1.5 py-0.5 text-[10px] font-bold text-paper opacity-0 transition-opacity group-hover:opacity-100">
-            {d.label}: {d.a + (d.b ?? 0)}
-          </span>
-        </div>
       ))}
     </div>
   );
@@ -259,66 +181,57 @@ export function Bars({ data, height = 56 }: { data: { label: string; a: number; 
 export function Pagination({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
   if (pages <= 1) return null;
   return (
-    <div className="flex items-center justify-between pt-3">
-      <span className="text-[11.5px] font-semibold text-mute">Page {page} of {pages}</span>
-      <div className="flex gap-1">
-        <Btn size="sm" variant="outline" icon="chevL" disabled={page <= 1} onClick={() => onPage(page - 1)}>Prev</Btn>
-        <Btn size="sm" variant="outline" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next<Icon name="chevR" size={14} /></Btn>
+    <div className="mt-3 flex items-center justify-end gap-2">
+      <Btn size="sm" variant="ghost" icon="chevL" disabled={page <= 1} onClick={() => onPage(page - 1)} />
+      <span className="text-[11.5px] font-extrabold text-mute tnum">{page} / {pages}</span>
+      <Btn size="sm" variant="ghost" icon="chevR" disabled={page >= pages} onClick={() => onPage(page + 1)} />
+    </div>
+  );
+}
+
+export function EmptyState({ icon, title, sub, action }: { icon: string; title: string; sub?: string; action?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center py-10 text-center">
+      <span className="mb-3 flex h-13 w-13 items-center justify-center rounded-2xl bg-ink/5 p-3 text-mute"><Icon name={icon} size={26} /></span>
+      <p className="font-display text-[15px] font-bold">{title}</p>
+      {sub && <p className="mt-1 max-w-sm text-[12px] text-mute">{sub}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+
+export function Stat({ label, value, tone = "" }: { label: string; value: ReactNode; tone?: string }) {
+  return (
+    <div>
+      <p className={`font-display text-[24px] font-bold leading-none tnum ${tone}`}>{value}</p>
+      <p className="mt-1 text-[9.5px] font-extrabold tracking-[0.14em] text-mute">{label.toUpperCase()}</p>
+    </div>
+  );
+}
+
+export function Bars({ data, height = 70 }: { data: { label: string; a: number; b?: number }[]; height?: number }) {
+  const max = Math.max(1, ...data.map(d => Math.max(d.a, d.b ?? 0)));
+  return (
+    <div>
+      <div className="flex items-end gap-1.5" style={{ height }}>
+        {data.map((d, i) => (
+          <div key={i} className="group relative flex flex-1 flex-col items-center justify-end gap-0.5">
+            <div className="flex w-full items-end justify-center gap-[2px]" style={{ height }}>
+              <div className="w-[38%] rounded-t bg-ink/75 transition-all group-hover:bg-ink anim-rise" style={{ height: `${(d.a / max) * 100}%`, minHeight: d.a ? 3 : 1, animationDelay: `${i * 30}ms` }} title={`${d.label}: ${d.a} opened`} />
+              <div className="w-[38%] rounded-t bg-volt/80 transition-all group-hover:bg-volt anim-rise" style={{ height: `${((d.b ?? 0) / max) * 100}%`, minHeight: d.b ? 3 : 1, animationDelay: `${i * 30 + 40}ms` }} title={`${d.label}: ${d.b ?? 0} done`} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex gap-1.5">
+        {data.map((d, i) => <span key={i} className="flex-1 text-center text-[8px] font-bold text-mute">{i % 2 === 0 ? d.label : ""}</span>)}
       </div>
     </div>
   );
 }
 
-export function CodeBox({ code, onReveal, onCopy }: { code?: string; onReveal?: () => void; onCopy?: () => void }) {
-  const [shown, setShown] = useState(false);
-  const [copied, setCopied] = useState(false);
-  if (!code) return <span className="font-mono text-[13px] text-mute">— not issued —</span>;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <code className={`rounded-lg border px-3 py-2 font-mono text-[13.5px] font-semibold tracking-[0.08em] ${shown ? "border-volt bg-voltsoft text-ink" : "border-line bg-paper text-mute"}`}>
-        {shown ? code.replace(/(\d{4})(?=\d)/g, "$1 ") : "•••• •••• •••• •••• ••••"}
-      </code>
-      <Btn size="sm" variant="outline" icon={shown ? "eyeoff" : "eye"} onClick={() => {
-        setShown(s => { if (!s && onReveal) onReveal(); return !s; });
-      }}>{shown ? "Hide" : "Reveal"}</Btn>
-      <Btn size="sm" variant="outline" icon="copy" onClick={async () => {
-        try { await navigator.clipboard.writeText(code); } catch { /* clipboard unavailable */ }
-        setCopied(true); setTimeout(() => setCopied(false), 1600);
-        if (onCopy) onCopy();
-      }}>{copied ? "Copied" : "Copy"}</Btn>
-    </div>
-  );
-}
-
-export function ToastHost() {
-  const { toasts, dismissToast } = useStore();
-  const toneMap = { ok: "border-ok/40 text-ok", warn: "border-warn/40 text-warn", danger: "border-danger/40 text-danger", info: "border-info/40 text-info" };
-  const iconMap = { ok: "check", warn: "alert", danger: "alert", info: "info" };
-  return (
-    <div className="pointer-events-none fixed bottom-4 left-1/2 z-[80] flex w-full max-w-md -translate-x-1/2 flex-col gap-2 px-4">
-      {toasts.map(t => (
-        <div key={t.id} className={`anim-toast pointer-events-auto flex items-center gap-2.5 rounded-lg border bg-ink px-3.5 py-2.5 shadow-xl`}>
-          <span className={toneMap[t.tone]}><Icon name={iconMap[t.tone]} size={16} /></span>
-          <p className="flex-1 text-[12.5px] font-semibold text-paper">{t.text}</p>
-          <button onClick={() => dismissToast(t.id)} className="text-paper/50 hover:text-paper"><Icon name="x" size={14} /></button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function SectionHead({ title, sub, right }: { title: string; sub?: string; right?: ReactNode }) {
-  return (
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="font-display text-[22px] font-bold leading-tight tracking-tight">{title}</h1>
-        {sub && <p className="mt-0.5 text-[12.5px] text-mute">{sub}</p>}
-      </div>
-      {right}
-    </div>
-  );
-}
-
-export function Spinner({ size = 16 }: { size?: number }) {
-  return <span className="spin inline-block rounded-full border-2 border-ink/25 border-t-volt" style={{ width: size, height: size }} />;
+export function copyText(t: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(t);
+  const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+  document.execCommand("copy"); ta.remove(); return Promise.resolve();
 }
