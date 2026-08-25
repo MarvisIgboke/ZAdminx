@@ -495,6 +495,12 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
                 )}
                 {needsField && isFieldUser && <FieldExecution opId={op.id} />}
                 {type === "inspection" && op.status === "IN_PROGRESS" && isTechOwner && isFieldUser && <InspectionExecution op={op} />}
+                {type === "activation" && op.stageIdx === 0 && isFieldUser && <ActivationResubmit op={op} />}
+                {type === "activation" && op.stageIdx === 0 && !isFieldUser && (
+                  <p className="flex items-center gap-2.5 rounded-lg border border-[#ecd9b8] bg-warnsoft/70 px-3 py-2.5 text-[11.5px] font-extrabold text-warn anim-fade">
+                    <Icon name="lock" size={14} /> AWAITING TECHNICAL MAN RESUBMISSION — field evidence must be re-captured before this activation can continue.
+                  </p>
+                )}
                 {(op.scan || op.gps || op.photos.length > 0 || op.video) && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     {op.scan && <MiniEv ok={op.scan.matched} okLabel="METER VERIFIED" badLabel="METER MISMATCH" detail={`${op.scan.value} · ${fmtDT(op.scan.at)}`} />}
@@ -606,6 +612,99 @@ function CustomerForm({ existing, onSave }: { opId: string; existing?: CustomerI
       </div>
       <Btn variant="primary" className="mt-3" icon="check" onClick={() => onSave(c)}>Save customer record</Btn>
     </Card>
+  );
+}
+
+/* Activation after a RETURN: re-capture scan / GPS / photos / customer, then
+   the gated resubmit is the only way back into the approval chain. */
+function ActivationResubmit({ op }: { op: Op }) {
+  const { decide, saveCustomer, addPhoto } = useStoreRef();
+  const [cust, setCust] = useState<CustomerInfo>(op.customer ?? { name: "", phone: "", email: "", address: "" });
+  const [photoFor, setPhotoFor] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scanOk = op.scan?.matched === true;
+  const gpsOk = op.gps?.accepted === true;
+  const photosOk = op.photos.length >= 4;
+  const custOk = !!cust.name.trim() && !!cust.phone.trim();
+  const allOk = scanOk && gpsOk && photosOk && custOk && note.trim().length >= 5;
+  const labels = ["Meter Front", "Meter Installation", "Meter Barcode", "Environment"];
+  const run = () => {
+    setErr("");
+    if (!scanOk) { setErr("Submission blocked — barcode verification must be completed."); return; }
+    if (!gpsOk) { setErr("Submission blocked — GPS capture is required."); return; }
+    if (!photosOk) { setErr(`Submission blocked — all 4 photographs required (${op.photos.length}/4).`); return; }
+    if (!custOk) { setErr("Submission blocked — customer name and phone are required."); return; }
+    if (note.trim().length < 5) { setErr("A resubmission note (min 5 characters) is required."); return; }
+    setBusy(true);
+    setTimeout(() => {
+      saveCustomer(op.id, cust);
+      const e = decide(op.id, "resubmit", note.trim());
+      if (e) setErr(e);
+      setBusy(false);
+    }, 350);
+  };
+  return (
+    <div className="space-y-4">
+      <div className={`flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors ${allOk ? "border-[#c2ddcd] bg-oksoft/70" : "border-[#ecd9b8] bg-warnsoft/60"}`}>
+        <Icon name={allOk ? "check" : "lock"} size={14} className={allOk ? "text-ok" : "text-warn"} />
+        <p className={`text-[11.5px] font-extrabold ${allOk ? "text-ok" : "text-warn"}`}>
+          {allOk ? "ALL EVIDENCE COMPLETE — RESUBMISSION UNLOCKED" : "RESUBMISSION LOCKED — RE-CAPTURE ALL FIELD EVIDENCE"}
+        </p>
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          {[{ ok: scanOk, t: "SCAN" }, { ok: gpsOk, t: "GPS" }, { ok: photosOk, t: `PHOTOS ${op.photos.length}/4` }, { ok: custOk, t: "CUSTOMER" }].map(g => (
+            <span key={g.t} className={`rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-widest ${g.ok ? "bg-ok text-white" : "bg-ink/10 text-mute"}`}>{g.ok ? "✓ " : ""}{g.t}</span>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">1 · BARCODE VERIFICATION</p>
+        <ScanBlock op={op} />
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">2 · GPS CAPTURE</p>
+        <GpsBlock op={op} />
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">3 · PHOTOGRAPHS ({op.photos.length}/4)</p>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {labels.map(l => {
+            const p = op.photos.find(x => x.label === l);
+            return p ? (
+              <button key={l} onClick={() => setPhotoFor(l)} title="Tap to retake" className="group relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line">
+                <img src={p.dataUrl} alt={l} className="anim-fade h-full w-full object-cover" />
+                <span className="absolute inset-0 flex items-end justify-center bg-ink/0 pb-1 opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100">
+                  <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-paper">RETAKEN ↺</span>
+                </span>
+              </button>
+            ) : (
+              <button key={l} onClick={() => setPhotoFor(l)} className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line2 bg-paper transition-all hover:-translate-y-0.5 hover:border-volt hover:bg-voltsoft active:translate-y-0">
+                <Icon name="camera" size={16} className="text-mute" /><span className="px-1 text-center text-[9.5px] font-extrabold text-ink2">{l}</span>
+              </button>
+            );
+          })}
+        </div>
+        {photoFor && <PhotoCapture label={photoFor} meter={op.meterNumber} lat={op.gps?.lat} lng={op.gps?.lng} onClose={() => setPhotoFor(null)}
+          onCapture={url => { addPhoto(op.id, { id: Math.random().toString(36).slice(2), label: photoFor, dataUrl: url, at: Date.now(), lat: op.gps?.lat, lng: op.gps?.lng }); setPhotoFor(null); }} />}
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">4 · CUSTOMER INFORMATION</p>
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Field label="Full name"><TextInput value={cust.name} onChange={e => setCust({ ...cust, name: e.target.value })} /></Field>
+          <Field label="Phone"><TextInput value={cust.phone} onChange={e => setCust({ ...cust, phone: e.target.value })} /></Field>
+          <Field label="Email"><TextInput value={cust.email} onChange={e => setCust({ ...cust, email: e.target.value })} /></Field>
+          <Field label="Address"><TextInput value={cust.address} onChange={e => setCust({ ...cust, address: e.target.value })} /></Field>
+        </div>
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">5 · RESUBMISSION NOTE (REQUIRED)</p>
+        <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="What was corrected since the return? Becomes the append-only workflow comment…" />
+      </div>
+      {err && <p className="flex items-center gap-2 rounded-lg border border-[#eac5be] bg-dangersoft px-3 py-2 text-[11.5px] font-extrabold text-danger anim-fade"><Icon name="alert" size={13} />{err}</p>}
+      <Btn variant="ok" icon="check" size="lg" className="w-full" disabled={!allOk} loading={busy} onClick={run}>RESUBMIT FOR SECRETARY REVIEW</Btn>
+    </div>
   );
 }
 

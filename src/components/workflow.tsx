@@ -374,8 +374,10 @@ export function ApprovalPanel({ op }: { op: Op }) {
   if (owner !== user.role) return null;
   const stage = STAGES[op.type][Math.min(op.stageIdx, STAGES[op.type].length - 1)];
   const isApprover = ["ENERGY_MANAGER", "GENERAL_MANAGER", "MD", "SECRETARY"].includes(owner) && stage.key !== "INITIATOR" && stage.key !== "DELIVERY" && stage.key !== "EXECUTION";
-  /* Inspection execution submits exclusively through the gated scan → GPS → video chain. */
+  /* Field stages submit exclusively through their gated evidence chains —
+     no generic confirm shortcuts. */
   if (op.type === "inspection" && stage.key === "EXECUTION") return null;
+  if (op.type === "activation" && stage.key === "INITIATOR") return null;
   const run = (d: Parameters<typeof decide>[1]) => {
     setErr(""); setBusy(d);
     setTimeout(() => { const e = decide(op.id, d, comment); if (e) setErr(e); else setComment(""); setBusy(null); }, 350);

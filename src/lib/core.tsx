@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 export type Role = "SUPER_ADMIN" | "SECRETARY" | "TECHNICAL_MAN" | "ENERGY_MANAGER" | "GENERAL_MANAGER" | "MD" | "IT_MANAGER";
 export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear";
 export type OpStatus = "PENDING" | "IN_PROGRESS" | "WAITING_ZVEND" | "ZVEND_SUCCESS" | "ZVEND_FAILED" | "ASSIGNED" | "SCHEDULED" | "COMPLETED" | "REJECTED" | "RETURNED" | "CANCELLED";
-export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" | "confirm";
+export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" | "confirm" | "resubmit";
 
 export interface User { id: string; name: string; email: string; role: Role; active: boolean; }
 export interface Facility { id: string; code: string; name: string; area: string; lat: number; lng: number; status: string; syncedAt: number; }
@@ -432,6 +432,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (op.gps?.accepted !== true) return "Submission blocked — GPS capture is required.";
       if (op.photos.length < 4) return `Submission blocked — all 4 photographs required (${op.photos.length}/4).`;
     }
+    /* Activation resubmission after a RETURN — the full field capture must be re-verified. */
+    if (op.type === "activation" && d === "resubmit") {
+      if (op.scan?.matched !== true) return "Submission blocked — barcode verification must be completed.";
+      if (op.gps?.accepted !== true) return "Submission blocked — GPS capture is required.";
+      if (op.photos.length < 4) return `Submission blocked — all 4 photographs required (${op.photos.length}/4).`;
+      if (!op.customer?.name?.trim() || !op.customer?.phone?.trim()) return "Submission blocked — customer name and phone are required.";
+    }
     const isMDdelegated = stage.role === "MD" && u.role === "GENERAL_MANAGER";
     const text = isMDdelegated ? `${comment.trim()} — Approved under MD delegation.` : comment.trim();
     const c: Comment = { id: uid(), userId: u.id, userName: u.name, role: u.role, text, at: Date.now(), decision: d };
@@ -499,6 +506,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const createActivation: StoreCtx["createActivation"] = d => {
     const u = stateRef.current.users.find(x => x.id === stateRef.current.currentUserId)!;
+    /* Initiation is a Technical-Man-only action — refused and audited otherwise. */
+    if (u.role !== "TECHNICAL_MAN" && u.role !== "SUPER_ADMIN") {
+      toast("Only the Technical Man can initiate a meter activation.", "danger");
+      mutate(st => ({ ...st, audit: [...mkAudit(st, "activation_start_denied", `${u.name} attempted to initiate an activation — not the Technical Man.`, undefined), ...st.audit] }));
+      return null;
+    }
+    /* The complete field capture is mandatory before an activation can exist. */
+    if (d.scan?.matched !== true) { toast("Submission blocked — barcode verification must be completed.", "danger"); return null; }
+    if (d.gps?.accepted !== true) { toast("Submission blocked — GPS capture is required.", "danger"); return null; }
+    if (d.photos.length < 4) { toast(`Submission blocked — all 4 photographs required (${d.photos.length}/4).`, "danger"); return null; }
+    if (!d.customer?.name?.trim() || !d.customer?.phone?.trim()) { toast("Submission blocked — customer name and phone are required.", "danger"); return null; }
     let created: Op | null = null;
     mutate(s => {
       const [ns, op] = begin(s, {
