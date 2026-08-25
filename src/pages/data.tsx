@@ -126,15 +126,24 @@ export function FacilityDetailPage({ id }: { id: string }) {
 export function CustomersPage() {
   const { state } = useStore();
   const { nav } = useRoute();
-  const [q, setQ] = useState(""); const [page, setPage] = useState(1);
-  const rows = state.customers.filter(c => !q.trim() || c.name.toLowerCase().includes(q.toLowerCase()) || c.phone.replace(/\s/g, "").includes(q.replace(/\s/g, "")));
+  const [q, setQ] = useState(""); const [fac, setFac] = useState("ALL"); const [page, setPage] = useState(1);
+  const rows = state.customers.filter(c =>
+    (fac === "ALL" || c.facilityId === fac) &&
+    (!q.trim() || c.name.toLowerCase().includes(q.toLowerCase()) || c.phone.replace(/\s/g, "").includes(q.replace(/\s/g, ""))));
   const pages = Math.max(1, Math.ceil(rows.length / 8));
+  const activeFac = state.facilities.find(f => f.id === fac);
   return (
     <div className="mx-auto max-w-[1040px]">
-      <SectionHead title="Customers" sub={`${state.customers.length} customers · names are not unique — a customer may hold several meters`} />
-      <div className="mb-3 max-w-sm"><TextInput value={q} onChange={e => { setQ(e.target.value); setPage(1); }} placeholder="Search name or phone…" /></div>
+      <SectionHead title="Customers" sub={`${rows.length} of ${state.customers.length} customers${activeFac ? ` at ${activeFac.name}` : ""} · names are not unique — a customer may hold several meters`} />
+      <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_240px]">
+        <TextInput value={q} onChange={e => { setQ(e.target.value); setPage(1); }} placeholder="Search name or phone…" />
+        <Select value={fac} onChange={e => { setFac(e.target.value); setPage(1); }}>
+          <option value="ALL">All facilities</option>
+          {state.facilities.map(f => <option key={f.id} value={f.id}>{f.name} · {f.code}</option>)}
+        </Select>
+      </div>
       <Card className="anim-rise">
-        {rows.length === 0 ? <div className="p-5"><EmptyState icon="users" title="No customers match" /></div> : (
+        {rows.length === 0 ? <div className="p-5"><EmptyState icon="users" title="No customers match" sub={fac !== "ALL" || q.trim() ? "Try another facility or clear the search." : undefined} /></div> : (
           <>
             <div className="divide-y divide-line/70 sm:hidden">
               {rows.slice((page - 1) * 8, page * 8).map(c => (
@@ -225,13 +234,21 @@ export function CustomerDetailPage({ id }: { id: string }) {
 /* ================= Meters ================= */
 export function MetersPage() {
   const { state } = useStore();
-  const [q, setQ] = useState(""); const [status, setStatus] = useState("ALL");
-  const rows = state.meters.filter(m => (!q.trim() || m.number.includes(q.trim())) && (status === "ALL" || m.status === status));
+  const [q, setQ] = useState(""); const [status, setStatus] = useState("ALL"); const [fac, setFac] = useState("ALL");
+  const rows = state.meters.filter(m =>
+    (!q.trim() || m.number.includes(q.trim())) &&
+    (status === "ALL" || m.status === status) &&
+    (fac === "ALL" || m.facilityId === fac));
+  const activeFac = state.facilities.find(f => f.id === fac);
   return (
     <div className="mx-auto max-w-[1040px]">
-      <SectionHead title="Meters" sub={`${state.meters.length} meters in registry · numbers globally unique`} />
-      <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_220px]">
+      <SectionHead title="Meters" sub={`${rows.length} of ${state.meters.length} meters in registry${activeFac ? ` at ${activeFac.name}` : ""} · numbers globally unique`} />
+      <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_200px_200px]">
         <TextInput value={q} onChange={e => setQ(e.target.value)} placeholder="Search meter number…" className="font-mono" />
+        <Select value={fac} onChange={e => setFac(e.target.value)}>
+          <option value="ALL">All facilities</option>
+          {state.facilities.map(f => <option key={f.id} value={f.id}>{f.name} · {f.code}</option>)}
+        </Select>
         <Select value={status} onChange={e => setStatus(e.target.value)}>
           <option value="ALL">All statuses</option>
           {["IN_STOCK", "INSTALLED", "ACTIVE", "FAULTY"].map(s => <option key={s} value={s}>{s}</option>)}
