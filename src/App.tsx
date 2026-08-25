@@ -12,14 +12,14 @@ import AdminPage, { ApiReferencePage, DatabaseSetupPage } from "./pages/admin";
 import ZVendIntegrationPage from "./pages/zvend";
 import { MeterMapPage } from "./pages/map";
 
-function AccessDenied({ perm }: { perm: string }) {
+function AccessDenied({ perm, note }: { perm: string; note?: string }) {
   const { nav } = useRoute();
   return (
     <div className="mx-auto max-w-xl">
       <Card className="anim-rise p-6 text-center">
         <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-warnsoft text-warn"><Icon name="shield" size={20} /></span>
         <h1 className="font-display text-[17px] font-bold">Access restricted</h1>
-        <p className="mt-1 text-[12.5px] text-mute">Your role does not include <code className="rounded bg-paper px-1 font-mono text-[11px] font-bold">{perm}</code>. Authorization is enforced on every transition, not just in the UI.</p>
+        <p className="mt-1 text-[12.5px] text-mute">Your role does not include <code className="rounded bg-paper px-1 font-mono text-[11px] font-bold">{perm}</code>. {note ?? "Authorization is enforced on every transition, not just in the UI."}</p>
         <Btn variant="outline" icon="chevL" className="mt-4" onClick={() => nav("")}>Back to dashboard</Btn>
       </Card>
     </div>
@@ -63,7 +63,7 @@ function Router() {
     case "customers": page = can("customers.view") ? (second ? <CustomerDetailPage id={second} /> : <CustomersPage />) : <AccessDenied perm="customers.view" />; break;
     case "meters": page = can("meters.view") ? <MetersPage /> : <AccessDenied perm="meters.view" />; break;
     case "reports": page = can("reports.view") ? <ReportsPage /> : <AccessDenied perm="reports.view" />; break;
-    case "zvend": page = can("admin.api") ? <ZVendIntegrationPage /> : <AccessDenied perm="admin.api" />; break;
+    case "zvend": page = user.role === "IT_MANAGER" || user.role === "SUPER_ADMIN" ? <ZVendIntegrationPage /> : <AccessDenied perm="zvend.console" note="The ZVend wire contract is restricted to the IT Manager and Super Admin. Authorization is enforced on every route." />; break;
     case "api-docs": page = user.role === "SUPER_ADMIN" ? <ApiReferencePage /> : <AccessDenied perm="api_reference.view" />; break;
     case "admin": page = second === "database" ? (can("admin.database") ? <DatabaseSetupPage /> : <AccessDenied perm="admin.database" />) : <AdminPage tab={second} />; break;
     default: page = (
