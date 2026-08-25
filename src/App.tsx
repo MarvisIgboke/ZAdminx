@@ -6,6 +6,7 @@ import { Shell } from "./components/shell";
 import { Btn, Card, Icon, useRoute } from "./components/ui";
 import { LoginPage, DashboardPage, ApprovalsPage, NotificationsPage, HistoryPage } from "./pages/work";
 import { OperationListPage, NewInstallationPage, RequestCodePage, StartActivationPage, ScheduleInspectionPage, OperationDetailPage } from "./pages/ops";
+import { MeterControlPage } from "./pages/control";
 import { FacilitiesPage, FacilityDetailPage, CustomersPage, CustomerDetailPage, MetersPage, ReportsPage } from "./pages/data";
 import AdminPage, { ApiReferencePage, DatabaseSetupPage } from "./pages/admin";
 import ZVendIntegrationPage from "./pages/zvend";
