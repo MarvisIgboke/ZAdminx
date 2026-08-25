@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { CustomerInfo, GpsRec, OpType, PhotoRec } from "../lib/core";
+import type { CustomerInfo, GpsRec, Op, OpType, PhotoRec } from "../lib/core";
 import { age, fmtDate, fmtDT, OPS, STAGES, STATUS_META, TERMINAL } from "../lib/core";
 import { useStore } from "../lib/core";
 import { BarcodeScanner, PhotoCapture } from "../components/workflow";
@@ -488,6 +488,7 @@ export function OperationDetailPage({ type, id }: { type: OpType; id: string }) 
                   <Btn variant="volt" icon="video" size="lg" className="w-full" onClick={() => startField(op.id)}>{type === "inspection" ? "START INSPECTION" : "START INSTALLATION"}</Btn>
                 )}
                 {needsField && <FieldExecution opId={op.id} />}
+                {type === "inspection" && op.status === "IN_PROGRESS" && isTechOwner && <InspectionExecution op={op} />}
                 {(op.scan || op.gps || op.photos.length > 0 || op.video) && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     {op.scan && <MiniEv ok={op.scan.matched} okLabel="METER VERIFIED" badLabel="METER MISMATCH" detail={`${op.scan.value} · ${fmtDT(op.scan.at)}`} />}
@@ -580,7 +581,7 @@ function MiniEv({ ok, okLabel, badLabel, detail }: { ok: boolean; okLabel: strin
 }
 
 /* local wrappers so detail page stays self-contained */
-import { WorkflowTimeline as Timeline, CommentThread as Comments, ApprovalPanel as ApprovalInline, ZVendPanel as ZVend } from "../components/workflow";
+import { WorkflowTimeline as Timeline, CommentThread as Comments, ApprovalPanel as ApprovalInline, ZVendPanel as ZVend, ScanBlock, GpsBlock, VideoBlock } from "../components/workflow";
 import { EvidenceRow } from "../components/workflow";
 import { useStore as useStoreRef } from "../lib/core";
 void EvidenceRow; void useStoreRef; void decideNoop;
@@ -599,6 +600,35 @@ function CustomerForm({ existing, onSave }: { opId: string; existing?: CustomerI
       </div>
       <Btn variant="primary" className="mt-3" icon="check" onClick={() => onSave(c)}>Save customer record</Btn>
     </Card>
+  );
+}
+
+/* Inspection field chain: barcode → GPS → live-camera video (countdown rule) → submit. */
+function InspectionExecution({ op }: { op: Op }) {
+  const scanOk = op.scan?.matched === true;
+  const gpsOk = op.gps?.accepted === true;
+  const videoReady = scanOk && gpsOk;
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">1 · BARCODE VERIFICATION</p>
+        <ScanBlock op={op} />
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">2 · GPS CAPTURE</p>
+        <GpsBlock op={op} />
+      </div>
+      <div>
+        <p className="mb-1.5 text-[10.5px] font-extrabold tracking-[0.14em] text-mute">3 · VIDEO · {Math.round((op.durationSec ?? 120) / 60)}-MINUTE RULE</p>
+        {videoReady ? (
+          <VideoBlock op={op} autoSubmit />
+        ) : (
+          <p className="flex items-center gap-2 rounded-lg border border-dashed border-line2 bg-paper px-3 py-2.5 text-[11.5px] font-bold text-mute">
+            <Icon name="video" size={14} /> Complete barcode verification{!scanOk && " and GPS capture"} to unlock the camera recorder.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -524,76 +524,175 @@ export function PhotoBlock({ op, labels }: { op: Op; labels: string[] }) {
   );
 }
 
-export function VideoBlock({ op }: { op: Op }) {
-  const { saveVideo, toast } = useStore();
-  const [phase, setPhase] = useState<"idle" | "rec" | "review">("idle");
+/* Real-camera inspection recorder: viewfinder (live MediaStream) → RECORDING
+   with mm:ss countdown that auto-stops at zero → review clip + observations.
+   `autoSubmit` advances the workflow (execute decision) once saved. */
+export function VideoBlock({ op, autoSubmit = false }: { op: Op; autoSubmit?: boolean }) {
+  const { saveVideo, decide, toast } = useStore();
+  const [phase, setPhase] = useState<"idle" | "viewfinder" | "rec" | "review">("idle");
   const [left, setLeft] = useState(op.durationSec ?? 120);
   const [obs, setObs] = useState(op.observations ?? "");
   const [url, setUrl] = useState<string | null>(null);
+  const [camErr, setCamErr] = useState("");
+  const [simulated, setSimulated] = useState(false);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const urlRef = useRef<string | null>(null);
   const dur = op.durationSec ?? 120;
+  const mm = String(Math.floor(left / 60)).padStart(2, "0");
+  const ss = String(left % 60).padStart(2, "0");
 
-  useEffect(() => () => { recRef.current?.state === "recording" && recRef.current.stop(); streamRef.current?.getTracks().forEach(t => t.stop()); }, []);
+  const stopStream = () => { streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; };
+  useEffect(() => () => {
+    try { if (recRef.current && recRef.current.state === "recording") recRef.current.stop(); } catch { /* noop */ }
+    stopStream();
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+  }, []);
+
+  /* Countdown — auto-stops the recorder at zero. */
   useEffect(() => {
     if (phase !== "rec") return;
-    if (left <= 0) { recRef.current?.state === "recording" && recRef.current.stop(); return; }
+    if (left <= 0) {
+      try { if (recRef.current && recRef.current.state === "recording") recRef.current.stop(); } catch { /* noop */ }
+      if (simulated) { stopStream(); setPhase("review"); }
+      return;
+    }
     const t = setTimeout(() => setLeft(l => l - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, left]);
+  }, [phase, left, simulated]);
 
-  const start = async () => {
+  const openViewfinder = async () => {
+    setCamErr("");
+    if (!navigator.mediaDevices?.getUserMedia) { setCamErr("This browser does not expose a camera. Use the simulated capture below."); setPhase("viewfinder"); return; }
+    setPhase("viewfinder");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
       streamRef.current = stream;
-      const rec = new MediaRecorder(stream);
-      recRef.current = rec; chunks.current = [];
-      rec.ondataavailable = e => e.data.size && chunks.current.push(e.data);
-      rec.onstop = () => {
-        const blob = new Blob(chunks.current, { type: rec.mimeType || "video/webm" });
-        setUrl(URL.createObjectURL(blob));
-        stream.getTracks().forEach(t => t.stop());
-        setPhase("review");
-      };
-      rec.start();
-      setLeft(dur); setPhase("rec");
-    } catch {
-      // No camera available — synthesize the capture so the workflow stays testable.
-      toast("Camera unavailable — capture simulated for this device.", "warn");
-      setUrl(null); setPhase("review");
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => undefined); }
+    } catch (e) {
+      const name = (e as { name?: string })?.name ?? "";
+      setCamErr(
+        name === "NotAllowedError" ? "Camera permission denied. Allow camera access and retry — or use the simulated capture."
+          : name === "NotFoundError" ? "No camera found on this device. Use the simulated capture."
+          : name === "NotReadableError" ? "The camera is busy in another app. Close it and retry, or use the simulated capture."
+          : "The camera could not be started. Use the simulated capture.");
     }
   };
-  const mm = String(Math.floor(left / 60)).padStart(2, "0"); const ss = String(left % 60).padStart(2, "0");
+
+  const beginRecording = () => {
+    setSimulated(false); chunks.current = []; setLeft(dur);
+    const stream = streamRef.current;
+    const hasRecorder = typeof MediaRecorder !== "undefined" && !!stream && stream.getVideoTracks().length > 0;
+    if (hasRecorder) {
+      const rec = new MediaRecorder(stream!);
+      recRef.current = rec;
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.current.push(e.data); };
+      rec.onstop = () => {
+        const blob = new Blob(chunks.current, { type: rec.mimeType || "video/webm" });
+        const u = URL.createObjectURL(blob);
+        urlRef.current = u; setUrl(u);
+        stopStream();
+        if (videoRef.current) videoRef.current.srcObject = null;
+        setPhase("review");
+      };
+      rec.start(250);
+    } else {
+      setSimulated(true);
+      toast("MediaRecorder unavailable — running a simulated capture.", "warn");
+    }
+    setPhase("rec");
+  };
+
+  const save = () => {
+    saveVideo(op.id, { url: url ?? "sim", durationSec: dur, at: Date.now() }, obs.trim());
+    if (autoSubmit) {
+      const e = decide(op.id, "execute", obs.trim() || "Inspection recording submitted.");
+      if (e) toast(e, "danger");
+      else toast("Submitted for Secretary review.", "ok");
+    } else {
+      toast("Video saved.", "ok");
+    }
+  };
 
   if (op.video && op.observations && phase === "idle") return (
-    <div className="space-y-2.5">
-      <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3">
-        <p className="flex items-center gap-2 font-display text-[13px] font-bold text-ok"><Icon name="video" size={15} /> VIDEO CAPTURED · {op.video.durationSec}s</p>
-        <p className="mt-1 text-[11.5px] text-ink2">Observations: {op.observations}</p>
-      </div>
+    <div className="rounded-lg border border-[#c2ddcd] bg-oksoft p-3">
+      <p className="flex items-center gap-2 font-display text-[13px] font-bold text-ok"><Icon name="video" size={15} /> VIDEO CAPTURED · {op.video.durationSec}s</p>
+      <p className="mt-1 text-[11.5px] text-ink2">Observations: {op.observations}</p>
     </div>
   );
 
   return (
     <div className="space-y-2.5">
-      {phase === "idle" && <Btn variant="primary" icon="video" onClick={start}>Start video · {Math.floor(dur / 60)}:{String(dur % 60).padStart(2, "0")} countdown</Btn>}
-      {phase === "rec" && (
-        <div className="relative aspect-video overflow-hidden rounded-xl bg-side anim-rise">
-          <div className="bg-circuit absolute inset-0" />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <span className="flex items-center gap-2 font-mono text-[13px] font-extrabold tracking-[0.22em] text-danger"><span className="h-2.5 w-2.5 rounded-full bg-danger recblink" />RECORDING</span>
-            <p className="font-display text-[44px] font-bold text-paper tnum">{mm}:{ss}</p>
-            <p className="font-mono text-[10px] text-[#93a29a]">AUTO-STOPS AT ZERO · {op.meterNumber}</p>
+      {phase === "idle" && (
+        <Btn variant="primary" icon="video" onClick={openViewfinder}>
+          Open camera · {Math.floor(dur / 60)}:{String(dur % 60).padStart(2, "0")} recording rule
+        </Btn>
+      )}
+
+      {phase === "viewfinder" && (
+        <div className="anim-rise space-y-2.5">
+          <div className="relative aspect-video overflow-hidden rounded-xl bg-side">
+            <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+            {!streamRef.current && <div className="bg-circuit absolute inset-0" />}
+            <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-danger" />
+            <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-danger" />
+            <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-danger" />
+            <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-danger" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/55 to-transparent px-4 py-2.5">
+              <span className={`h-2 w-2 rounded-full ${camErr ? "bg-danger" : "bg-ok okdot"}`} />
+              <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#e6ebe7]">{camErr ? "CAMERA UNAVAILABLE" : `LIVE VIEWFINDER · ${op.meterNumber}`}</p>
+            </div>
+            {camErr && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-dangersoft text-danger"><Icon name="alert" size={18} /></span>
+                <p className="max-w-sm text-[12px] font-semibold leading-snug text-[#c9d3cc]">{camErr}</p>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="danger" icon="video" disabled={!!camErr} onClick={beginRecording}>START RECORDING · {dur}s</Btn>
+            {camErr && <Btn variant="outline" icon="video" onClick={() => { setSimulated(true); setLeft(dur); setPhase("rec"); }}>Simulate recording</Btn>}
+            {!camErr && <Btn variant="outline" icon="camera" onClick={openViewfinder}>Retry camera</Btn>}
+            <Btn variant="ghost" onClick={() => { stopStream(); setPhase("idle"); }}>Cancel</Btn>
           </div>
         </div>
       )}
+
+      {phase === "rec" && (
+        <div className="relative aspect-video overflow-hidden rounded-xl bg-side anim-rise">
+          {!simulated && streamRef.current
+            ? <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+            : <div className="bg-circuit absolute inset-0" />}
+          <span className="absolute left-5 top-5 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-danger" />
+          <span className="absolute right-5 top-5 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-danger" />
+          <span className="absolute bottom-5 left-5 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-danger" />
+          <span className="absolute bottom-5 right-5 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-danger" />
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent px-4 py-2.5">
+            <span className="flex items-center gap-2 font-mono text-[12px] font-extrabold tracking-[0.22em] text-white"><span className="h-2.5 w-2.5 rounded-full bg-danger recblink" />RECORDING{simulated ? " · SIMULATED" : ""}</span>
+            <span className="font-mono text-[11px] font-bold text-[#e6ebe7]">{op.meterNumber}</span>
+          </div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <p className="rounded-xl bg-ink/70 px-5 py-2 font-display text-[46px] font-bold leading-none text-paper tnum">{mm}:{ss}</p>
+            <p className="mt-2 font-mono text-[10px] tracking-widest text-[#c9d3cc]">AUTO-STOPS AT ZERO</p>
+          </div>
+          <div className="absolute inset-x-4 bottom-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+            <div className="h-full rounded-full bg-danger transition-[width] duration-1000 ease-linear" style={{ width: `${(left / dur) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
       {phase === "review" && (
         <div className="space-y-2.5 anim-rise">
-          {url ? <video src={url} controls className="aspect-video w-full rounded-xl border border-line bg-side object-contain" />
-            : <div className="flex aspect-video items-center justify-center rounded-xl border border-line bg-side"><p className="font-mono text-[11px] text-[#93a29a]">SIMULATED CAPTURE · {dur}s</p></div>}
-          <Textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Inspection observations — seal state, display, terminal block…" />
-          <Btn variant="ok" icon="check" disabled={obs.trim().length < 5} onClick={() => saveVideo(op.id, { url: url ?? "sim", durationSec: dur, at: Date.now() }, obs.trim())}>Save video & observations</Btn>
+          {url ? <video src={url} controls playsInline className="aspect-video w-full rounded-xl border border-line bg-side object-contain" />
+            : <div className="flex aspect-video flex-col items-center justify-center gap-1 rounded-xl border border-line bg-side"><Icon name="video" size={20} className="text-[#5d6b62]" /><p className="font-mono text-[11px] text-[#93a29a]">SIMULATED CAPTURE · {dur}s</p></div>}
+          <Textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Inspection observations — seal state, display readings, terminal block…" />
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ok" icon="check" disabled={obs.trim().length < 5} onClick={save}>{autoSubmit ? "Save & submit for review" : "Save video & observations"}</Btn>
+            <Btn variant="outline" icon="video" onClick={() => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); urlRef.current = null; setUrl(null); setSimulated(false); openViewfinder(); }}>Discard & re-record</Btn>
+          </div>
+          <p className="text-[10.5px] font-semibold text-mute">Observations require at least 5 characters — they become the execution comment.</p>
         </div>
       )}
     </div>
