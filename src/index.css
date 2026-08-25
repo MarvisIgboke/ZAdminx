@@ -67,6 +67,22 @@ body {
 @keyframes recblink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 .recblink { animation: recblink 1.1s steps(1) infinite; }
 
+@keyframes dashflow { to { stroke-dashoffset: -24; } }
+.dashflow { animation: dashflow 1.4s linear infinite; }
+
+@keyframes routedraw { to { stroke-dashoffset: 0; } }
+.route-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: routedraw 1.25s cubic-bezier(.5,0,.25,1) .1s forwards; }
+.route-flow { opacity: 0; animation: fadein .45s ease 1.2s forwards, dashflow 1.15s linear 1.2s infinite; }
+.route-glow { opacity: 0; animation: fadein .7s ease .5s forwards; }
+
+@keyframes pinpulse { 0% { transform: scale(.4); opacity: .8; } 100% { transform: scale(2.4); opacity: 0; } }
+.pinger { transform-box: fill-box; transform-origin: center; animation: pinpulse 1.9s ease-out infinite; }
+.pinger.slow { animation-duration: 2.6s; animation-delay: .5s; }
+@keyframes radarspin { to { transform: rotate(360deg); } }
+.radar { transform-box: view-box; transform-origin: 50% 50%; animation: radarspin 2.6s linear infinite; }
+@keyframes pindrop { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+.pin-drop { animation: pindrop .5s cubic-bezier(.22,1,.36,1) both; }
+
 @keyframes pingring { 0% { opacity: .75; transform: scale(.35); } 80% { opacity: 0; transform: scale(1.9); } 100% { opacity: 0; transform: scale(1.9); } }
 .pinger { transform-box: fill-box; transform-origin: center; animation: pingring 1.9s cubic-bezier(.2,.7,.4,1) infinite; }
 .pinger.slow { animation-delay: .5s; }

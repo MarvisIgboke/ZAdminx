@@ -36,9 +36,20 @@ const BRIDGES: string[] = [
 ];
 const LAGOON = `M 0 ${py(6.478)} C ${px(3.4)} ${py(6.486)} ${px(3.44)} ${py(6.47)} ${px(3.5)} ${py(6.476)} C ${px(3.56)} ${py(6.482)} ${px(3.6)} ${py(6.47)} 1000 ${py(6.478)} L 1000 ${py(6.452)} C ${px(3.58)} ${py(6.447)} ${px(3.52)} ${py(6.456)} ${px(3.46)} ${py(6.45)} C ${px(3.42)} ${py(6.446)} ${px(3.38)} ${py(6.462)} 0 ${py(6.458)} Z`;
 
-function ServiceMap({ locates, facilities, selected, onSelect, sweep }: {
+type RouteState = { o: { lat: number; lng: number; accuracy: number }; target: string; at: number };
+
+/* Great-circle distance between two fixes. */
+const havKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+  const R = 6371, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+const fmtDist = (km: number) => (km < 1 ? `${Math.max(1, Math.round(km * 1000))} m` : `${km.toFixed(2)} km`);
+
+function ServiceMap({ locates, facilities, selected, onSelect, sweep, route }: {
   locates: LocateRec[]; facilities: { id: string; code: string; name: string; lat: number; lng: number }[];
-  selected: string | null; onSelect: (meter: string) => void; sweep: boolean;
+  selected: string | null; onSelect: (meter: string) => void; sweep: boolean; route: RouteState | null;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 });
@@ -79,6 +90,9 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep }: {
           <radialGradient id="pinGlow" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#e89b2e" stopOpacity=".28" /><stop offset="100%" stopColor="#e89b2e" stopOpacity="0" />
           </radialGradient>
+          <radialGradient id="posGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#2f6b8f" stopOpacity=".4" /><stop offset="100%" stopColor="#2f6b8f" stopOpacity="0" />
+          </radialGradient>
         </defs>
         <rect width={VW} height={VH} fill="#101815" />
         <rect width={VW} height={VH} fill="url(#mgrid)" />
@@ -105,6 +119,51 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep }: {
               <text y="24" textAnchor="middle" fill="#7d8b82" fontSize="12" fontWeight="700" fontFamily="JetBrains Mono, monospace">{f.code}</text>
             </g>
           ))}
+          {/* live route: current position → selected meter */}
+          {route && (() => {
+            const tl = locates.find(l => l.meterNumber === route.target);
+            if (!tl) return null;
+            const o = { x: px(route.o.lng), y: py(route.o.lat) };
+            const t = { x: px(tl.lng), y: py(tl.lat) };
+            const dx = t.x - o.x, dy = t.y - o.y;
+            const km = havKm(route.o, tl);
+            const dLabel = fmtDist(km);
+            const originDot = (
+              <g transform={`translate(${o.x} ${o.y})`}>
+                <circle r="26" fill="url(#posGlow)" />
+                <circle r="16" fill="#2f6b8f" opacity=".35" className="pinger slow" />
+                <circle r="6.5" fill="#5aa9cf" stroke="#eaf4fa" strokeWidth="2.4" />
+                <text y="32" textAnchor="middle" fontSize="10.5" fontWeight="800" fill="#8fc3dd" fontFamily="JetBrains Mono, monospace" letterSpacing="1.5">YOU · ±{route.o.accuracy} m</text>
+              </g>
+            );
+            if (Math.hypot(dx, dy) < 16) return (
+              <g key={`r-${route.at}`}>
+                {originDot}
+                <g transform={`translate(${o.x} ${o.y - 34})`}>
+                  <rect x="-56" y="-13" width="112" height="22" rx="5" fill="#e89b2e" />
+                  <text textAnchor="middle" y="2.5" fontSize="10.5" fontWeight="800" fill="#1a231e" fontFamily="JetBrains Mono, monospace">AT METER · {dLabel}</text>
+                </g>
+              </g>
+            );
+            const sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
+            const r = Math.max(16, Math.min(Math.abs(dx), Math.abs(dy), 60) * 0.85);
+            const cx = t.x - sx * r, cy = o.y + sy * Math.min(Math.abs(dy), r);
+            const d = `M ${o.x} ${o.y} L ${cx} ${o.y} Q ${t.x} ${o.y} ${t.x} ${cy} L ${t.x} ${t.y}`;
+            return (
+              <g key={`r-${route.target}-${route.at}`}>
+                <path d={d} fill="none" stroke="#e89b2e" strokeOpacity=".14" strokeWidth="13" strokeLinecap="round" className="route-glow" />
+                <path d={d} fill="none" stroke="#0a0f0c" strokeWidth="5.5" strokeLinecap="round" opacity=".8" />
+                <path d={d} pathLength={1} fill="none" stroke="#e89b2e" strokeWidth="3" strokeLinecap="round" className="route-draw" />
+                <path d={d} fill="none" stroke="#ffd489" strokeWidth="2" strokeDasharray="12 12" strokeLinecap="round" className="route-flow" />
+                <g transform={`translate(${t.x} ${o.y})`} className="anim-fade">
+                  <rect x="-42" y="-30" width="84" height="21" rx="5" fill="#101815" stroke="#e89b2e" strokeOpacity=".55" />
+                  <text textAnchor="middle" y="-15.5" fontSize="10.5" fontWeight="800" fill="#ffd489" fontFamily="JetBrains Mono, monospace">{dLabel}</text>
+                </g>
+                {originDot}
+              </g>
+            );
+          })()}
+
           {/* meter pins */}
           {locates.map(l => {
             const sel = selected === l.meterNumber;
@@ -152,7 +211,7 @@ function ServiceMap({ locates, facilities, selected, onSelect, sweep }: {
           <button onClick={reset} title="Reset view" className="p-2 text-[#93a29a] transition-colors hover:bg-side3 hover:text-paper"><Icon name="grid" size={12} /></button>
         </div>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2">
+      <div className="pointer-events-none absolute left-3 top-12 flex flex-col items-start gap-1.5">
         <span className="flex items-center gap-1.5 rounded-md border border-[#22302a] bg-[#101815]/90 px-2 py-1 text-[9px] font-extrabold tracking-widest text-[#93a29a] backdrop-blur"><span className="h-2.5 w-2.5 rounded-full bg-[#42504a] ring-1 ring-[#0e1512]" /> METER PIN</span>
         <span className="flex items-center gap-1.5 rounded-md border border-[#22302a] bg-[#101815]/90 px-2 py-1 text-[9px] font-extrabold tracking-widest text-[#93a29a] backdrop-blur"><span className="h-2.5 w-2.5 rounded-full bg-volt ring-1 ring-[#0e1512]" /> SELECTED</span>
         <span className="flex items-center gap-1.5 rounded-md border border-[#22302a] bg-[#101815]/90 px-2 py-1 text-[9px] font-extrabold tracking-widest text-[#93a29a] backdrop-blur"><span className="h-2 w-2 rotate-45 bg-[#1e2b23] ring-1 ring-[#5d6b62]" /> FACILITY</span>
@@ -301,12 +360,14 @@ function UpdateLocateModal({ meter, onClose }: { meter: Meter; onClose: () => vo
 /* Meter Map page                                                       */
 /* ------------------------------------------------------------------ */
 export function MeterMapPage() {
-  const { state, user, can, syncLocates, toast } = useStore();
+  const { state, user, can, online, syncLocates, pushAudit, toast } = useStore();
   const [q, setQ] = useState("");
   const [fac, setFac] = useState("ALL");
   const [selected, setSelected] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [updateFor, setUpdateFor] = useState<Meter | null>(null);
+  const [route, setRoute] = useState<RouteState | null>(null);
+  const [routing, setRouting] = useState(false);
 
   const located = useMemo(() => state.locates.filter(l => {
     const s = q.trim().toLowerCase();
@@ -330,6 +391,36 @@ export function MeterMapPage() {
     await syncLocates();
     setSyncing(false);
     toast(`Locate table synced · ${state.locates.length} records pulled from ZVend.`, "ok");
+  };
+
+  /* Selecting another located meter retargets the active route. */
+  const choose = (n: string) => {
+    setSelected(n);
+    setRoute(r => (r && r.target !== n && state.locates.some(l => l.meterNumber === n)) ? { ...r, target: n, at: Date.now() } : r);
+  };
+
+  /* START — capture the current fix, then draw the route to the meter. */
+  const startRoute = () => {
+    if (routing) return;
+    const destNo = sel && state.locates.some(l => l.meterNumber === sel.meterNumber) ? sel.meterNumber : route?.target;
+    const dl = destNo ? state.locates.find(l => l.meterNumber === destNo) : null;
+    if (!dl) { toast("Select a located meter pin first — the route needs a destination with GPS.", "warn"); return; }
+    if (!online) { toast("Offline — the GPS fix needs the field link.", "danger"); return; }
+    setRouting(true);
+    setTimeout(() => {
+      const acc = Math.round(6 + Math.random() * 24);
+      const ang = Math.random() * Math.PI * 2;
+      const span = 0.008 + Math.random() * 0.012;
+      const lat = +Math.min(Math.max(dl.lat + Math.sin(ang) * span, B.minLat + 0.012), B.maxLat - 0.012).toFixed(6);
+      const lng = +Math.min(Math.max(dl.lng + Math.cos(ang) * span * 0.9, B.minLng + 0.012), B.maxLng - 0.012).toFixed(6);
+      const o = { lat, lng, accuracy: acc };
+      setRoute({ o, target: dl.meterNumber, at: Date.now() });
+      setSelected(dl.meterNumber);
+      setRouting(false);
+      const km = havKm(o, dl);
+      toast(`GPS locked ±${acc} m — route drawn · ${fmtDist(km)} to ${dl.meterNumber}.`, "ok");
+      pushAudit("route_started", `Field route to meter ${dl.meterNumber} — ${km.toFixed(2)} km from a ±${acc} m fix.`);
+    }, 1300);
   };
 
   const detail = sel && (
@@ -393,7 +484,7 @@ export function MeterMapPage() {
               const f = state.facilities.find(x => x.id === l.facilityId);
               const active = selected === l.meterNumber;
               return (
-                <button key={l.id} onClick={() => setSelected(l.meterNumber)}
+                <button key={l.id} onClick={() => choose(l.meterNumber)}
                   className={`flex w-full items-center gap-2.5 border-l-2 px-3 py-2.5 text-left transition-colors ${active ? "border-volt bg-voltsoft/70" : "border-transparent hover:bg-paper"}`}>
                   <span className={`h-2 w-2 shrink-0 rounded-full ${active ? "bg-volt livedot" : "bg-ink/25"}`} />
                   <span className="min-w-0 flex-1">
@@ -431,7 +522,44 @@ export function MeterMapPage() {
         {/* map */}
         <div className="anim-rise flex min-h-[520px] flex-col gap-3 lg:min-h-0">
           <div className="relative min-h-[420px] flex-1">
-            <ServiceMap locates={located} facilities={state.facilities} selected={selected} onSelect={setSelected} sweep={syncing} />
+            <ServiceMap locates={located} facilities={state.facilities} selected={selected} onSelect={choose} sweep={syncing} route={route} />
+
+            {/* START — capture current location & route to the meter */}
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-col items-center gap-2">
+              {route ? (() => {
+                const tl = state.locates.find(l => l.meterNumber === route.target);
+                if (!tl) return null;
+                const km = havKm(route.o, tl);
+                const drive = Math.max(1, Math.round((km / 30) * 60));
+                const walk = Math.max(1, Math.round((km / 5) * 60));
+                return (
+                  <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-[#22302a] bg-[#101815]/94 px-2.5 py-2 shadow-2xl backdrop-blur anim-rise">
+                    <span className="flex items-center gap-1.5 rounded-lg bg-[#1e2b23] px-2.5 py-1.5 font-mono text-[10.5px] font-bold text-[#c8d3ca]"><Icon name="pin" size={11} className="text-volt" />{fmtDist(km)}</span>
+                    <span className="flex items-center gap-1.5 rounded-lg bg-[#1e2b23] px-2.5 py-1.5 font-mono text-[10.5px] font-bold text-[#c8d3ca]"><Icon name="clock" size={11} className="text-[#8fc3dd]" />DRIVE ~{drive} MIN</span>
+                    <span className="flex items-center gap-1.5 rounded-lg bg-[#1e2b23] px-2.5 py-1.5 font-mono text-[10.5px] font-bold text-[#c8d3ca]"><Icon name="history" size={11} className="text-[#9fd8b4]" />WALK ~{walk} MIN</span>
+                    <span className="flex items-center gap-1.5 rounded-lg bg-[#1e2b23] px-2.5 py-1.5 font-mono text-[10.5px] font-bold text-[#c8d3ca]"><Icon name="wifi" size={11} className="text-[#8fc3dd]" />±{route.o.accuracy} m</span>
+                    <span className="mx-0.5 hidden h-5 w-px bg-[#22302a] sm:block" />
+                    <button onClick={startRoute} disabled={routing} className="flex items-center gap-1.5 rounded-lg bg-volt px-3.5 py-1.5 font-display text-[11px] font-bold tracking-[0.12em] text-ink transition-all hover:-translate-y-px hover:shadow-[0_6px_16px_rgba(232,155,46,.4)] disabled:opacity-80">
+                      {routing ? <Icon name="sync" size={12} className="spin" /> : <Icon name="nav" size={12} />}START
+                    </button>
+                    <button onClick={() => setRoute(null)} className="flex items-center gap-1 rounded-lg border border-[#22302a] px-2.5 py-1.5 font-display text-[11px] font-bold tracking-[0.12em] text-[#93a29a] transition-colors hover:border-danger hover:text-danger"><Icon name="x" size={11} />CLEAR</button>
+                  </div>
+                );
+              })() : (
+                <>
+                  {sel && (
+                    <span className="rounded-md border border-[#22302a] bg-[#101815]/90 px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider text-[#93a29a] backdrop-blur">
+                      ROUTE TO <span className="text-volt">{sel.meterNumber}</span>
+                    </span>
+                  )}
+                  <button onClick={startRoute} disabled={routing}
+                    className="pointer-events-auto flex h-12 items-center gap-2.5 rounded-full bg-volt px-9 font-display text-[15px] font-bold tracking-[0.12em] text-ink shadow-[0_10px_28px_rgba(232,155,46,.35)] transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_36px_rgba(232,155,46,.5)] active:translate-y-0 disabled:cursor-wait disabled:opacity-90">
+                    {routing ? (<><Icon name="sync" size={16} className="spin" />ACQUIRING GPS…</>) : (<><Icon name="nav" size={16} />START</>)}
+                  </button>
+                </>
+              )}
+            </div>
+
             <div className="absolute right-3 top-12 hidden w-[264px] md:block">{detail}</div>
           </div>
           <div className="md:hidden">{detail}</div>
