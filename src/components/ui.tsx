@@ -65,6 +65,7 @@ const paths: Record<string, ReactNode> = {
   db: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" /><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" /></>,
   keyboard: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" /></>,
   sync: <><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /></>,
+  wallet: <><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M15.5 12.5H21v3h-5.5a1.5 1.5 0 0 1 0-3z" /><path d="M3 9.5V8a2 2 0 0 1 2-2h11.5" /></>,
   file: <><path d="M6 2h9l5 5v15H6V2z" /><path d="M14 2v6h6" /></>,
 };
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {

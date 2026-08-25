@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 /* ================= Types ================= */
 export type Role = "SUPER_ADMIN" | "SECRETARY" | "TECHNICAL_MAN" | "ENERGY_MANAGER" | "GENERAL_MANAGER" | "MD" | "IT_MANAGER";
-export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear" | "control";
+export type OpType = "installation" | "activation" | "inspection" | "tamper" | "clear" | "control" | "wallet";
 export type OpStatus = "PENDING" | "IN_PROGRESS" | "WAITING_ZVEND" | "ZVEND_SUCCESS" | "ZVEND_FAILED" | "ASSIGNED" | "SCHEDULED" | "COMPLETED" | "REJECTED" | "RETURNED" | "CANCELLED";
 export type Decision = "approve" | "reject" | "return" | "execute" | "deliver" | "confirm" | "resubmit";
 
@@ -17,6 +17,9 @@ export interface LocateRec { id: string; meterNumber: string; facilityId: string
    Wire format is "1"/"0" strings: 1 = ON (energized), 0 = OFF (disconnected). */
 export interface PowerState { meterNumber: string; facilityId: string; power: "1" | "0"; updatedAt: number; updatedBy: string; }
 export const powerLabel = (p: "1" | "0") => (p === "1" ? "ON" : "OFF");
+/* ZVend wallet registry — balances pulled via GET /v1/wallet/. */
+export interface WalletRec { meterNumber: string; facilityId: string; balance: number; updatedAt: number; updatedBy: string; }
+export const fmtNaira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 export interface Comment { id: string; userId: string; userName: string; role: Role; text: string; at: number; decision?: string; }
 export interface ScanRec { value: string; matched: boolean; at: number; }
 export interface GpsRec { lat: number; lng: number; accuracy: number; at: number; accepted: boolean; }
@@ -38,6 +41,7 @@ export interface Op {
   note?: string; scan?: ScanRec; gps?: GpsRec; photos: PhotoRec[]; customer?: CustomerInfo;
   instruction?: string; durationSec?: number; scheduledFor?: number; video?: VideoRec; observations?: string;
   command?: "1" | "0"; powerResult?: "1" | "0";
+  action?: "FUND" | "DEDUCT"; amount?: number; walletResult?: number;
   zvend?: ZvendRec; assignedToId?: string; availableAt?: number; completedAt?: number;
   retryCount: number; pendingSync?: boolean;
 }
@@ -51,6 +55,7 @@ export interface AppState {
   operations: Op[]; notifications: Notif[]; audit: AuditEntry[]; apiLogs: ApiLog[];
   locates: LocateRec[]; locateSyncedAt: number;
   powerStates: PowerState[]; powerSyncedAt: number;
+  wallets: WalletRec[]; walletSyncedAt: number;
   delegation: Delegation | null; settings: Settings;
 }
 
@@ -59,7 +64,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   SUPER_ADMIN: "Super Admin", SECRETARY: "Secretary", TECHNICAL_MAN: "Technical Man",
   ENERGY_MANAGER: "Energy Manager", GENERAL_MANAGER: "General Manager", MD: "Managing Director", IT_MANAGER: "IT Manager",
 };
-export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear", "control"];
+export const OP_ORDER: OpType[] = ["installation", "activation", "inspection", "tamper", "clear", "control", "wallet"];
 export const OPS: Record<OpType, { label: string; short: string; path: string; icon: string; prefix: string; blurb: string }> = {
   installation: { label: "Meter Installation", short: "Installation", path: "meter-installation", icon: "wrench", prefix: "INS", blurb: "New meter registration through EM → GM → MD → ZVend → field install." },
   activation: { label: "Meter Activation", short: "Activation", path: "meter-activation", icon: "bolt", prefix: "ACT", blurb: "Technical-Man-initiated energization with customer capture." },
@@ -67,6 +72,7 @@ export const OPS: Record<OpType, { label: string; short: string; path: string; i
   tamper: { label: "Tamper Code", short: "Tamper", path: "tamper-code", icon: "shield", prefix: "TMP", blurb: "20-digit tamper code issued by ZVend after MD approval." },
   clear: { label: "Clear Code", short: "Clear", path: "clear-code", icon: "key", prefix: "CLR", blurb: "20-digit clear code issued by ZVend after MD approval." },
   control: { label: "Meter Control", short: "Control", path: "meter-control", icon: "power", prefix: "CTL", blurb: "Secretary-initiated ON/OFF power commands executed by ZVend after MD approval." },
+  wallet: { label: "Wallet Mgt", short: "Wallet", path: "wallet-mgt", icon: "wallet", prefix: "WLT", blurb: "Secretary-initiated wallet funding & deduction executed by ZVend after GM → MD approval." },
 };
 
 type StageRole = Role | "ZVEND" | "INITIATOR";
@@ -128,6 +134,13 @@ export const STAGES: Record<OpType, StageDef[]> = {
     ap("ZVEND", "ZVend Power Execution", "ZVEND"),
     ap("COMPLETED", "Completed", "SECRETARY"),
   ],
+  wallet: [
+    ap("INITIATOR", "Secretary Wallet Request", "SECRETARY"),
+    ap("GENERAL_MANAGER", "General Manager Approval", "GENERAL_MANAGER"),
+    ap("MD", "MD Final Approval", "MD"),
+    ap("ZVEND", "ZVend Wallet Execution", "ZVEND"),
+    ap("COMPLETED", "Completed", "SECRETARY"),
+  ],
 };
 export const STATUS_META: Record<OpStatus, { label: string; tone: "gray" | "amber" | "green" | "red" | "blue" | "teal" | "ink" }> = {
   PENDING: { label: "Pending", tone: "amber" }, IN_PROGRESS: { label: "In Progress", tone: "blue" },
@@ -146,7 +159,7 @@ export const PERMS = [
   "clear.view", "clear.create", "clear.approve", "clear.execute", "clear.history",
   "control.view", "control.create", "control.approve", "control.history",
   "approvals.view", "facilities.view", "facilities.sync", "customers.view", "meters.view",
-  "reports.view", "notifications.view", "history.view", "map.view", "map.update",
+  "reports.view", "notifications.view", "history.view", "map.view", "map.update", "wallet.view", "wallet.create", "wallet.approve", "wallet.history",
   "admin.users", "admin.roles", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", "admin.delegation", "admin.database",
 ] as const;
 const viewAll = ["installation.view", "activation.view", "inspection.view", "tamper.view", "clear.view"];
@@ -155,12 +168,12 @@ const approveAll = viewAll.map(p => p.replace(".view", ".approve"));
 const dataView = ["facilities.view", "customers.view", "meters.view", "notifications.view"];
 export const DEFAULT_MATRIX: Record<Role, string[]> = {
   SUPER_ADMIN: [...PERMS],
-  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view", "control.view", "control.create", "control.approve", "control.history"],
-  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update", "control.view", "control.history"],
-  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
-  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
-  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view", "control.view", "control.approve", "control.history"],
-  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view", "control.view", "control.history"],
+  SECRETARY: [...viewAll, ...historyAll, ...approveAll, "installation.create", "tamper.create", "clear.create", "installation.release", "approvals.view", "reports.view", ...dataView, "facilities.sync", "map.view", "control.view", "control.create", "control.approve", "control.history", "wallet.view", "wallet.create", "wallet.history"],
+  TECHNICAL_MAN: [...viewAll, ...historyAll, "activation.create", "tamper.create", "clear.create", "installation.execute", "activation.execute", "inspection.execute", "tamper.execute", "clear.execute", "history.view", ...dataView, "map.view", "map.update", "control.view", "control.history", "wallet.view", "wallet.history"],
+  ENERGY_MANAGER: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.history"],
+  GENERAL_MANAGER: [...viewAll, ...historyAll, ...approveAll, "inspection.create", "approvals.view", "reports.view", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history"],
+  MD: [...viewAll, ...historyAll, ...approveAll, "approvals.view", "reports.view", "admin.delegation", ...dataView, "map.view", "control.view", "control.approve", "control.history", "wallet.view", "wallet.approve", "wallet.history"],
+  IT_MANAGER: [...viewAll, ...historyAll, "reports.view", "facilities.sync", "admin.users", "admin.api", "admin.apilogs", "admin.audit", "admin.settings", ...dataView, "map.view", "control.view", "control.history", "wallet.view", "wallet.history"],
 };
 
 /* ================= Helpers ================= */
@@ -187,6 +200,7 @@ export function actionableBy(op: Op, hasDelegation: boolean): Role | null {
 
 /* ================= Seed ================= */
 const now = Date.now(); const H = 3600000; const D = 24 * H;
+const txnForRaw = (prefix: string, n: number) => `ZADM-${prefix}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(n).padStart(6, "0")}`;
 function buildSeed(): AppState {
   const users: User[] = [
     { id: "u-sa", name: "Amara Okafor", email: "super.admin@zarox.com", role: "SUPER_ADMIN", active: true },
@@ -337,11 +351,42 @@ function buildSeed(): AppState {
     updatedAt: now - Math.floor(Math.random() * 10 + 1) * D, updatedBy: "ZVend Sync",
   }));
   apiLogs.unshift({ id: uid(), at: now - 4 * H, user: "Tunde Alabi", endpoint: "/v1/meters/power-status", method: "GET", status: "success", code: "00", durationMs: 264 });
+  /* ZVend wallet registry — deployed meters carry prepaid balances; one is empty. */
+  const wallets: WalletRec[] = meters.filter(m => ["ACTIVE", "INSTALLED", "FAULTY"].includes(m.status)).map((m, i) => ({
+    meterNumber: m.number, facilityId: m.facilityId,
+    balance: i === 3 ? 0 : Math.round((800 + Math.random() * 24000) / 50) * 50,
+    updatedAt: now - Math.floor(Math.random() * 12 + 1) * D, updatedBy: "ZVend Sync",
+  }));
+  apiLogs.unshift({ id: uid(), at: now - 3 * H, user: "Tunde Alabi", endpoint: "/v1/wallet", method: "GET", status: "success", code: "00", durationMs: 231 });
+  /* demo: one wallet request awaiting the GM, one bounced back after a ZVend error */
+  const wSec = users[1], wGm = users[4];
+  const wA = wallets[0], wB = wallets[1];
+  operations.unshift({
+    id: "op-w1", type: "wallet", txn: txnForRaw("WLT", 21), status: "PENDING", stageIdx: 1,
+    meterNumber: wA.meterNumber, facilityId: wA.facilityId, action: "FUND", amount: 5000,
+    initiatorId: wSec.id, initiatorName: wSec.name, initiatorRole: "SECRETARY",
+    createdAt: now - 2 * H, updatedAt: now - 1 * H, retryCount: 0, photos: [],
+    note: "Customer topped up at the bank — credit the meter wallet.",
+    comments: [{ id: uid(), userId: wSec.id, userName: wSec.name, role: "SECRETARY", text: "FUND ₦5,000 requested — bank slip #TRF-8841 attached to file.", at: now - 2 * H, decision: "submit" }],
+  });
+  operations.unshift({
+    id: "op-w2", type: "wallet", txn: txnForRaw("WLT", 18), status: "ZVEND_FAILED", stageIdx: 0,
+    meterNumber: wB.meterNumber, facilityId: wB.facilityId, action: "DEDUCT", amount: 1500,
+    initiatorId: wSec.id, initiatorName: wSec.name, initiatorRole: "SECRETARY",
+    createdAt: now - 26 * H, updatedAt: now - 5 * H, retryCount: 1, photos: [],
+    note: "Token reversal — deduct the disputed amount.",
+    zvend: { status: "failed", ref: "N/A", responseCode: "91", at: now - 5 * H, latencyMs: 640 },
+    comments: [
+      { id: uid(), userId: wSec.id, userName: wSec.name, role: "SECRETARY", text: "DEDUCT ₦1,500 requested — dispute case #DSP-112.", at: now - 26 * H, decision: "submit" },
+      { id: uid(), userId: wGm.id, userName: wGm.name, role: "GENERAL_MANAGER", text: "Verified against the dispute register. Approved.", at: now - 9 * H, decision: "approve" },
+    ],
+  });
   return {
     v: 4, currentUserId: null, users, permissionMatrix: JSON.parse(JSON.stringify(DEFAULT_MATRIX)),
     facilities, customers, meters, operations, notifications, audit, apiLogs,
     locates, locateSyncedAt: now - 5 * H,
     powerStates, powerSyncedAt: now - 4 * H,
+    wallets, walletSyncedAt: now - 3 * H,
     delegation: { mdId: "u-md", gmId: "u-gm", from: now - 2 * D, to: now + 5 * D, reason: "MD travelling — approval authority delegated.", active: true },
     settings: { maxGpsAccuracyM: 50, inspectionDurations: [60, 120, 180, 300], defaultDurationSec: 120, zvend: { baseUrl: "https://api.zvend.zarox.com", token: "zv_live_••••••••", timeout: 20, retries: 3 } },
   };
